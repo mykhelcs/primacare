@@ -1,23 +1,52 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/invoice_provider.dart';
 
-class BarcodeScannerScreen extends StatefulWidget {
+class BarcodeScannerScreen extends ConsumerStatefulWidget {
+  final String invoiceId;
   final VoidCallback? onDispensed;
 
-  const BarcodeScannerScreen({super.key, this.onDispensed});
+  const BarcodeScannerScreen({
+    super.key,
+    this.invoiceId = 'inv-1',
+    this.onDispensed,
+  });
 
   @override
-  State<BarcodeScannerScreen> createState() => _BarcodeScannerScreenState();
+  ConsumerState<BarcodeScannerScreen> createState() => _BarcodeScannerScreenState();
 }
 
-class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
+class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
+  final MobileScannerController _scannerController = MobileScannerController();
   String _currentBarcode = '4800016552011';
   String _itemName = 'Hepatitis B Pediatric Vaccine';
   String _batchNumber = 'HB-2026-04 (FIFO)';
   String _expiry = 'Exp: 24 Oct 2026 (28 days left)';
   double _unitCost = 450.0;
   int _quantity = 1;
-  bool _isSuccess = false;
+  bool _isProcessing = false;
+
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_isProcessing) return;
+    final barcode = capture.barcodes.firstOrNull?.rawValue;
+    if (barcode != null && barcode != _currentBarcode) {
+      setState(() {
+        _currentBarcode = barcode;
+        _itemName = 'Scanned Item ($barcode)';
+        _batchNumber = 'Oldest Non-Expired Batch';
+        _expiry = 'Valid';
+      });
+    }
+  }
 
   void _selectMockItem(String name, String barcode, String batch, String exp, double cost) {
     setState(() {
@@ -27,21 +56,44 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
       _expiry = exp;
       _unitCost = cost;
       _quantity = 1;
-      _isSuccess = false;
     });
   }
 
-  void _confirmDispense() {
-    setState(() => _isSuccess = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Successfully dispensed $_quantity × $_itemName!'),
-        backgroundColor: AppColors.success,
-      ),
-    );
-    Future.delayed(const Duration(milliseconds: 600), () {
-      if (mounted) widget.onDispensed?.call();
-    });
+  Future<void> _confirmDispense() async {
+    setState(() => _isProcessing = true);
+
+    try {
+      final result = await ref.read(openInvoicesProvider.notifier).dispenseBarcode(
+            barcode: _currentBarcode,
+            invoiceId: widget.invoiceId,
+            quantity: _quantity,
+          );
+
+      if (!mounted) return;
+
+      if (result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Successfully dispensed $_quantity × ${result.itemName ?? _itemName} to invoice!',
+            ),
+            backgroundColor: AppColors.success,
+          ),
+        );
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) widget.onDispensed?.call();
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message ?? 'Dispense failed.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
   @override
@@ -59,12 +111,31 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
       ),
       body: Column(
         children: [
-          // Viewfinder simulation
+          // Viewfinder
           Expanded(
             flex: 4,
             child: Stack(
               alignment: Alignment.center,
               children: [
+                if (!kIsWeb &&
+                    (defaultTargetPlatform == TargetPlatform.android ||
+                        defaultTargetPlatform == TargetPlatform.iOS))
+                  MobileScanner(
+                    controller: _scannerController,
+                    onDetect: _onDetect,
+                  )
+                else
+                  Container(
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Camera Scanner Active\n(Simulate below for testing/desktop)',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white38, fontSize: 13),
+                    ),
+                  ),
+
+                // Targeting Reticle
                 Center(
                   child: Container(
                     width: 250,
@@ -107,7 +178,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             ),
           ),
 
-          // Mock scan buttons for quick testing
+          // Simulation chips
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: Colors.black,
@@ -153,7 +224,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             ),
           ),
 
-          // Item Dispense Panel
+          // Dispense Action Panel
           Container(
             padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
@@ -218,8 +289,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-
-                  // Quantity Controls
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -255,18 +324,23 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                     ],
                   ),
                   const SizedBox(height: 14),
-
                   ElevatedButton(
-                    onPressed: _isSuccess ? null : _confirmDispense,
+                    onPressed: _isProcessing ? null : _confirmDispense,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.accent,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text(
-                      _isSuccess ? 'Dispensed!' : 'Confirm Dispensation & Deduct Inventory',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                    ),
+                    child: _isProcessing
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text(
+                            'Confirm Dispensation & Add to Invoice',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                          ),
                   ),
                 ],
               ),
