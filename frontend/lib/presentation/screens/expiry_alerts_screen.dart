@@ -1,12 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/inventory_provider.dart';
 import '../widgets/status_badge.dart';
 
-class ExpiryAlertsScreen extends StatelessWidget {
+class ExpiryAlertsScreen extends ConsumerWidget {
   const ExpiryAlertsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final batchesAsync = ref.watch(expiringBatchesProvider);
+    final allBatches = batchesAsync.value ?? [];
+
+    final criticalBatches = allBatches.where((b) => b.isCriticalExpiry).toList();
+    final upcomingBatches = allBatches
+        .where((b) => !b.isCriticalExpiry && b.daysUntilExpiry <= 60 && !b.isExpired)
+        .toList();
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -17,57 +27,83 @@ class ExpiryAlertsScreen extends StatelessWidget {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text(
-            'Critical — Expiring within 30 days',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: AppColors.danger,
-            ),
-          ),
-          const SizedBox(height: 8),
-          _buildAlertCard(
-            itemName: 'Hepatitis B Vaccine',
-            batch: 'Batch #HB-2026-04',
-            qty: '12 vials remaining',
-            expiry: 'Expires in 18 days (Oct 16, 2026)',
-            isCritical: true,
-          ),
-          _buildAlertCard(
-            itemName: 'Tetanus Toxoid 0.5ml',
-            batch: 'Batch #TT-2026-02',
-            qty: '8 vials remaining',
-            expiry: 'Expires in 26 days (Oct 24, 2026)',
-            isCritical: true,
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'Upcoming — 31–60 days',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: AppColors.warning,
-            ),
-          ),
-          const SizedBox(height: 8),
-          _buildAlertCard(
-            itemName: 'MMR Pediatric',
-            batch: 'Batch #MMR-2026-09',
-            qty: '15 vials remaining',
-            expiry: 'Expires in 42 days (Nov 09, 2026)',
-            isCritical: false,
-          ),
-          _buildAlertCard(
-            itemName: 'Amoxicillin Syrup 60ml',
-            batch: 'Batch #AMX-2026-15',
-            qty: '20 bottles remaining',
-            expiry: 'Expires in 55 days (Nov 22, 2026)',
-            isCritical: false,
-          ),
-        ],
+      body: RefreshIndicator(
+        onRefresh: () async => ref.invalidate(expiringBatchesProvider),
+        color: AppColors.primary,
+        child: batchesAsync.isLoading && allBatches.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Critical — Expiring within 30 days',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.danger,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (criticalBatches.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Text(
+                        'No critical batches expiring within 30 days! FIFO compliant.',
+                        style: TextStyle(fontSize: 12, color: AppColors.success, fontWeight: FontWeight.w500),
+                      ),
+                    )
+                  else
+                    ...criticalBatches.map(
+                      (b) => _buildAlertCard(
+                        itemName: 'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})',
+                        batch: 'Batch #${b.batchNumber}',
+                        qty: '${b.quantityRemaining} units remaining',
+                        expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
+                        isCritical: true,
+                      ),
+                    ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Upcoming — 31–60 days',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.warning,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (upcomingBatches.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Text(
+                        'No upcoming batch expirations in 31–60 days.',
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                    )
+                  else
+                    ...upcomingBatches.map(
+                      (b) => _buildAlertCard(
+                        itemName: 'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})',
+                        batch: 'Batch #${b.batchNumber}',
+                        qty: '${b.quantityRemaining} units remaining',
+                        expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
+                        isCritical: false,
+                      ),
+                    ),
+                ],
+              ),
       ),
     );
   }

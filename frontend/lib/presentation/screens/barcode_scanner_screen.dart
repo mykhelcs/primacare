@@ -3,15 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/models/inventory_item.dart';
+import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
+import '../../data/services/offline_sync_service.dart';
 
 class BarcodeScannerScreen extends ConsumerStatefulWidget {
-  final String invoiceId;
+  final String? invoiceId;
   final VoidCallback? onDispensed;
 
   const BarcodeScannerScreen({
     super.key,
-    this.invoiceId = 'inv-1',
+    this.invoiceId,
     this.onDispensed,
   });
 
@@ -22,12 +25,16 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   final MobileScannerController _scannerController = MobileScannerController();
   String _currentBarcode = '4800016552011';
-  String _itemName = 'Hepatitis B Pediatric Vaccine';
-  String _batchNumber = 'HB-2026-04 (FIFO)';
-  String _expiry = 'Exp: 24 Oct 2026 (28 days left)';
-  double _unitCost = 450.0;
+  InventoryItem? _scannedItem;
   int _quantity = 1;
   bool _isProcessing = false;
+  bool _isTorchOn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lookupBarcode(_currentBarcode);
+  }
 
   @override
   void dispose() {
@@ -35,37 +42,66 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    if (_isProcessing) return;
-    final barcode = capture.barcodes.firstOrNull?.rawValue;
-    if (barcode != null && barcode != _currentBarcode) {
+  Future<void> _lookupBarcode(String barcode) async {
+    setState(() => _currentBarcode = barcode);
+    final repo = ref.read(inventoryRepositoryProvider);
+    final item = await repo.getItemByBarcode(barcode);
+    if (mounted) {
       setState(() {
-        _currentBarcode = barcode;
-        _itemName = 'Scanned Item ($barcode)';
-        _batchNumber = 'Oldest Non-Expired Batch';
-        _expiry = 'Valid';
+        _scannedItem = item ??
+            InventoryItem(
+              id: 'unknown',
+              name: 'Item ($barcode)',
+              barcode: barcode,
+              unitCost: 150.00,
+            );
+        _quantity = 1;
       });
     }
   }
 
-  void _selectMockItem(String name, String barcode, String batch, String exp, double cost) {
-    setState(() {
-      _itemName = name;
-      _currentBarcode = barcode;
-      _batchNumber = batch;
-      _expiry = exp;
-      _unitCost = cost;
-      _quantity = 1;
-    });
+  void _onDetect(BarcodeCapture capture) {
+    if (_isProcessing) return;
+    final barcode = capture.barcodes.firstOrNull?.rawValue;
+    if (barcode != null && barcode != _currentBarcode) {
+      _lookupBarcode(barcode);
+    }
   }
 
-  Future<void> _confirmDispense() async {
+  Future<void> _confirmDispense(String targetInvoiceId) async {
     setState(() => _isProcessing = true);
+
+    final isOnline = OfflineSyncService().isOnline;
+    if (!isOnline) {
+      OfflineSyncService().enqueueAction(
+        type: SyncActionType.dispenseItem,
+        payload: {
+          'barcode': _currentBarcode,
+          'invoiceId': targetInvoiceId,
+          'quantity': _quantity,
+        },
+      );
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Offline Mode: Dispensation of $_quantity × ${_scannedItem?.name} queued for sync!',
+            ),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) widget.onDispensed?.call();
+        });
+      }
+      return;
+    }
 
     try {
       final result = await ref.read(openInvoicesProvider.notifier).dispenseBarcode(
             barcode: _currentBarcode,
-            invoiceId: widget.invoiceId,
+            invoiceId: targetInvoiceId,
             quantity: _quantity,
           );
 
@@ -75,7 +111,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Successfully dispensed $_quantity × ${result.itemName ?? _itemName} to invoice!',
+              'Successfully dispensed $_quantity × ${result.itemName ?? _scannedItem?.name} to Invoice #$targetInvoiceId!',
             ),
             backgroundColor: AppColors.success,
           ),
@@ -98,16 +134,37 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    final activeInvoiceId = widget.invoiceId ??
+        (openInvoices.isNotEmpty ? openInvoices.first.id : 'inv-1');
+
+    final itemName = _scannedItem?.name ?? 'Loading item...';
+    final unitCost = _scannedItem?.unitCost ?? 0.0;
+    final totalCost = unitCost * _quantity;
+
     return Scaffold(
       backgroundColor: Colors.black87,
       appBar: AppBar(
         backgroundColor: Colors.black87,
         elevation: 0,
         title: const Text(
-          'Point at Barcode',
+          'Point Camera at Barcode',
           style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: Icon(_isTorchOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+            onPressed: () {
+              _scannerController.toggleTorch();
+              setState(() => _isTorchOn = !_isTorchOn);
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
+            onPressed: () => _scannerController.switchCamera(),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Column(
         children: [
@@ -129,7 +186,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                     color: Colors.black,
                     alignment: Alignment.center,
                     child: const Text(
-                      'Camera Scanner Active\n(Simulate below for testing/desktop)',
+                      'Camera Viewfinder\n(Mobile camera active on device)',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.white38, fontSize: 13),
                     ),
@@ -165,11 +222,11 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      'Barcode: $_currentBarcode',
+                      'Target Invoice: #$activeInvoiceId',
                       style: const TextStyle(
-                        color: Colors.white70,
+                        color: Colors.white,
                         fontSize: 12,
-                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -178,7 +235,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
             ),
           ),
 
-          // Simulation chips
+          // Simulation chips for testing without physical barcodes
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: Colors.black,
@@ -186,38 +243,20 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  const Text('Simulate: ', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  const Text('Quick Test: ', style: TextStyle(color: Colors.white54, fontSize: 12)),
                   ActionChip(
                     label: const Text('Hep B Vaccine'),
-                    onPressed: () => _selectMockItem(
-                      'Hepatitis B Pediatric Vaccine',
-                      '4800016552011',
-                      'HB-2026-04 (FIFO)',
-                      'Exp: 24 Oct 2026 (28 days left)',
-                      450.0,
-                    ),
+                    onPressed: () => _lookupBarcode('4800016552011'),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
                     label: const Text('Syringe 3ml'),
-                    onPressed: () => _selectMockItem(
-                      'Disposable Syringe 3ml',
-                      '4800016552022',
-                      'SY-2026-11 (FIFO)',
-                      'Exp: 15 Jun 2027',
-                      25.0,
-                    ),
+                    onPressed: () => _lookupBarcode('4800016552022'),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
                     label: const Text('Paracetamol'),
-                    onPressed: () => _selectMockItem(
-                      'Paracetamol 500mg Tab',
-                      '4800016552033',
-                      'PC-2026-09 (FIFO)',
-                      'Exp: 30 Dec 2026',
-                      5.50,
-                    ),
+                    onPressed: () => _lookupBarcode('4800016552033'),
                   ),
                 ],
               ),
@@ -241,7 +280,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          _itemName,
+                          itemName,
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -250,7 +289,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                         ),
                       ),
                       Text(
-                        '₱${(_unitCost * _quantity).toStringAsFixed(2)}',
+                        '₱${totalCost.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
@@ -268,9 +307,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                           color: AppColors.primaryLight,
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Text(
-                          _batchNumber,
-                          style: const TextStyle(
+                        child: const Text(
+                          'FIFO Automatic Batch Allocation',
+                          style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: AppColors.primary,
@@ -279,11 +318,11 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        _expiry,
+                        'Barcode: $_currentBarcode',
                         style: const TextStyle(
                           fontSize: 11,
-                          color: AppColors.danger,
-                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                          fontFamily: 'monospace',
                         ),
                       ),
                     ],
@@ -325,7 +364,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    onPressed: _isProcessing ? null : _confirmDispense,
+                    onPressed: _isProcessing ? null : () => _confirmDispense(activeInvoiceId),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.accent,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -337,9 +376,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                             width: 20,
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
-                        : const Text(
-                            'Confirm Dispensation & Add to Invoice',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                        : Text(
+                            'Confirm Dispensation & Append to Bill',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                           ),
                   ),
                 ],

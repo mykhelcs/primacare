@@ -6,7 +6,8 @@ final patientRepositoryProvider = Provider<PatientRepository>((ref) {
   return PatientRepository();
 });
 
-final patientListProvider = AsyncNotifierProvider<PatientListNotifier, List<Patient>>(
+final patientListProvider =
+    AsyncNotifierProvider<PatientListNotifier, List<Patient>>(
   PatientListNotifier.new,
 );
 
@@ -17,7 +18,13 @@ class PatientListNotifier extends AsyncNotifier<List<Patient>> {
     return repo.getPatients();
   }
 
-  Future<void> addPatient({
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    final repo = ref.read(patientRepositoryProvider);
+    state = AsyncData(await repo.getPatients());
+  }
+
+  Future<Patient> addPatient({
     required String fullName,
     String? dateOfBirth,
     String? contactNumber,
@@ -30,6 +37,7 @@ class PatientListNotifier extends AsyncNotifier<List<Patient>> {
       contactNumber: contactNumber,
       email: email,
     );
-    state = AsyncData([newPatient, ...state.value ?? []]);
+    await refresh();
+    return newPatient;
   }
 }

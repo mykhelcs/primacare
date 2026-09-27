@@ -6,7 +6,8 @@ final invoiceRepositoryProvider = Provider<InvoiceRepository>((ref) {
   return InvoiceRepository();
 });
 
-final openInvoicesProvider = AsyncNotifierProvider<OpenInvoicesNotifier, List<Invoice>>(
+final openInvoicesProvider =
+    AsyncNotifierProvider<OpenInvoicesNotifier, List<Invoice>>(
   OpenInvoicesNotifier.new,
 );
 
@@ -15,6 +16,12 @@ class OpenInvoicesNotifier extends AsyncNotifier<List<Invoice>> {
   Future<List<Invoice>> build() async {
     final repo = ref.read(invoiceRepositoryProvider);
     return repo.getOpenInvoices();
+  }
+
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    final repo = ref.read(invoiceRepositoryProvider);
+    state = AsyncData(await repo.getOpenInvoices());
   }
 
   Future<DispenseResult> dispenseBarcode({
@@ -30,10 +37,26 @@ class OpenInvoicesNotifier extends AsyncNotifier<List<Invoice>> {
     );
 
     if (result.success) {
-      // Refresh invoices state
-      state = AsyncData(await repo.getOpenInvoices());
+      await refresh();
+      ref.invalidate(invoiceDetailProvider(invoiceId));
     }
 
     return result;
   }
+
+  Future<bool> markInvoicePaid(String invoiceId) async {
+    final repo = ref.read(invoiceRepositoryProvider);
+    final success = await repo.markAsPaid(invoiceId);
+    if (success) {
+      await refresh();
+      ref.invalidate(invoiceDetailProvider(invoiceId));
+    }
+    return success;
+  }
 }
+
+final invoiceDetailProvider =
+    FutureProvider.family<Invoice?, String>((ref, invoiceId) async {
+  final repo = ref.read(invoiceRepositoryProvider);
+  return repo.getInvoiceById(invoiceId);
+});

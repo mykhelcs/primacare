@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'core/theme/app_theme.dart';
 import 'data/services/supabase_service.dart';
+import 'presentation/providers/auth_provider.dart';
+import 'presentation/screens/login_screen.dart';
 import 'presentation/screens/main_shell_screen.dart';
-
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'presentation/screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +41,37 @@ class PrimaCareApp extends StatelessWidget {
       title: 'PrimaCare Smart Clinic',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const MainShellScreen(),
+      home: const AuthGate(),
     );
+  }
+}
+
+class AuthGate extends ConsumerStatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  ConsumerState<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends ConsumerState<AuthGate> {
+  bool _isSplashFinished = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isSplashFinished) {
+      return SplashScreen(
+        onInitializationComplete: () {
+          setState(() => _isSplashFinished = true);
+        },
+      );
+    }
+
+    final isAuthenticated = ref.watch(isAuthenticatedProvider);
+
+    if (!isAuthenticated) {
+      return const LoginScreen();
+    }
+
+    return const MainShellScreen();
   }
 }

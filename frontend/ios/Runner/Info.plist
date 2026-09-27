@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>PrimaCare requires camera access to scan medication and vaccine barcodes at point of care.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>PrimaCare uses Face ID to securely and quickly restore clinical staff sessions.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>PrimaCare requires Bluetooth to connect to mobile ESC/POS thermal receipt printers.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

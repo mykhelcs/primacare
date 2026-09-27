@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/inventory_provider.dart';
 
-class ReceiveStockScreen extends StatefulWidget {
+import '../../data/services/thermal_printer_service.dart';
+import '../providers/auth_provider.dart';
+
+class ReceiveStockScreen extends ConsumerStatefulWidget {
   const ReceiveStockScreen({super.key});
 
   @override
-  State<ReceiveStockScreen> createState() => _ReceiveStockScreenState();
+  ConsumerState<ReceiveStockScreen> createState() => _ReceiveStockScreenState();
 }
 
-class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
+class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
   final _batchController = TextEditingController();
   final _qtyController = TextEditingController();
   final _expiryController = TextEditingController();
   String _selectedItem = 'Hepatitis B Pediatric Vaccine';
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -22,16 +28,68 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
     super.dispose();
   }
 
-  void _submitStock() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Received ${_qtyController.text} units into batch ${_batchController.text}!'),
-        backgroundColor: AppColors.success,
-      ),
+  Future<void> _submitStock() async {
+    final qty = int.tryParse(_qtyController.text) ?? 0;
+    if (qty <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid quantity greater than 0.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    final expiry = DateTime.tryParse(_expiryController.text) ??
+        DateTime.now().add(const Duration(days: 365));
+
+    final batchNum = _batchController.text.isNotEmpty
+        ? _batchController.text
+        : 'LOT-${DateTime.now().millisecondsSinceEpoch}';
+
+    final repo = ref.read(inventoryRepositoryProvider);
+    final batchId = await repo.receiveStockBatch(
+      itemId: 'i1',
+      batchNumber: batchNum,
+      quantity: qty,
+      expiryDate: expiry,
     );
-    _batchController.clear();
-    _qtyController.clear();
-    _expiryController.clear();
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+      final clinic = ref.read(currentClinicProvider);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Successfully received $qty units into batch ($batchId)!'),
+          backgroundColor: AppColors.success,
+          action: SnackBarAction(
+            label: 'Print Labels',
+            textColor: Colors.white,
+            onPressed: () {
+              final labelText = ThermalPrinterService().generateBatchBarcodeLabelText(
+                itemName: _selectedItem,
+                batchNumber: batchNum,
+                barcode: 'BAR-${batchNum.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
+                expiryDate: expiry,
+                clinic: clinic,
+              );
+              ThermalPrinterService().printText(labelText);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Batch barcode stickers dispatched to Bluetooth Printer!'),
+                  backgroundColor: AppColors.primary,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      _batchController.clear();
+      _qtyController.clear();
+      _expiryController.clear();
+    }
   }
 
   @override
@@ -108,12 +166,18 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _submitStock,
+                onPressed: _isLoading ? null : _submitStock,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
-                child: const Text('Add Batch to Inventory'),
+                child: _isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Add Batch to Inventory'),
               ),
             ],
           ),

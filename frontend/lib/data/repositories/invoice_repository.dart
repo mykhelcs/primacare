@@ -42,15 +42,72 @@ class InvoiceRepository {
     try {
       final response = await _client
           .from('invoices')
-          .select('*, invoice_line_items(*)')
-          .eq('status', 'open')
+          .select('*, invoice_line_items(*), patients(full_name)')
           .order('created_at', ascending: false);
 
-      return (response as List)
-          .map((item) => Invoice.fromJson(item as Map<String, dynamic>))
-          .toList();
+      return (response as List).map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        if (map['patients'] != null && map['patients'] is Map) {
+          map['patient_name'] = map['patients']['full_name'];
+        }
+        return Invoice.fromJson(map);
+      }).toList();
     } catch (_) {
       return _mockInvoices;
+    }
+  }
+
+  Future<Invoice?> getInvoiceById(String id) async {
+    if (_client == null) {
+      final found = _mockInvoices.where((i) => i.id == id);
+      return found.isNotEmpty ? found.first : _mockInvoices.first;
+    }
+
+    try {
+      final response = await _client
+          .from('invoices')
+          .select('*, invoice_line_items(*), patients(full_name)')
+          .eq('id', id)
+          .maybeSingle();
+
+      if (response == null) return null;
+      final map = Map<String, dynamic>.from(response);
+      if (map['patients'] != null && map['patients'] is Map) {
+        map['patient_name'] = map['patients']['full_name'];
+      }
+      return Invoice.fromJson(map);
+    } catch (_) {
+      final found = _mockInvoices.where((i) => i.id == id);
+      return found.isNotEmpty ? found.first : _mockInvoices.first;
+    }
+  }
+
+  Future<bool> markAsPaid(String invoiceId) async {
+    if (_client == null) {
+      final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+      if (idx != -1) {
+        final old = _mockInvoices[idx];
+        _mockInvoices[idx] = Invoice(
+          id: old.id,
+          patientId: old.patientId,
+          patientName: old.patientName,
+          status: 'paid',
+          totalAmount: old.totalAmount,
+          createdAt: old.createdAt,
+          lineItems: old.lineItems,
+        );
+      }
+      return true;
+    }
+
+    try {
+      await _client
+          .from('invoices')
+          .update({'status': 'paid'})
+          .eq('id', invoiceId);
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -61,11 +118,36 @@ class InvoiceRepository {
   }) async {
     if (_client == null) {
       // Local simulated response for offline/dev
+      final invIndex = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+      final addedTotal = 450.0 * quantity;
+      if (invIndex != -1) {
+        final old = _mockInvoices[invIndex];
+        final updatedLines = [
+          ...old.lineItems,
+          InvoiceLineItem(
+            id: 'li_${DateTime.now().millisecondsSinceEpoch}',
+            invoiceId: invoiceId,
+            itemName: 'Hepatitis B Pediatric Vaccine',
+            quantity: quantity,
+            unitCost: 450.0,
+          ),
+        ];
+        _mockInvoices[invIndex] = Invoice(
+          id: old.id,
+          patientId: old.patientId,
+          patientName: old.patientName,
+          status: old.status,
+          totalAmount: old.totalAmount + addedTotal,
+          createdAt: old.createdAt,
+          lineItems: updatedLines,
+        );
+      }
+
       return DispenseResult(
         success: true,
         itemName: 'Hepatitis B Pediatric Vaccine',
         quantityDispensed: quantity,
-        amountAdded: 450.0 * quantity,
+        amountAdded: addedTotal,
       );
     }
 

@@ -1,12 +1,69 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/notification_provider.dart';
 import '../widgets/status_badge.dart';
 
-class NotificationsScreen extends StatelessWidget {
+class NotificationsScreen extends ConsumerWidget {
   const NotificationsScreen({super.key});
 
+  void _showScheduleModal(BuildContext context, WidgetRef ref) {
+    final patientIdCtrl = TextEditingController(text: 'p4');
+    final vaccineCtrl = TextEditingController(text: 'Hepatitis B Booster');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Schedule Vaccine Reminder', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: patientIdCtrl,
+              decoration: const InputDecoration(labelText: 'Patient ID'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: vaccineCtrl,
+              decoration: const InputDecoration(labelText: 'Vaccine / Reminder Name'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
+                    patientId: patientIdCtrl.text,
+                    vaccineName: vaccineCtrl.text,
+                    dueDate: DateTime.now().add(const Duration(days: 7)),
+                  );
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Reminder queued in database! Automated runner will dispatch.'),
+                  backgroundColor: AppColors.success,
+                ),
+              );
+            },
+            child: const Text('Schedule'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifsAsync = ref.watch(notificationListProvider);
+    final notifs = notifsAsync.value ?? [];
+
+    final pending = notifs.where((n) => n.isPending).toList();
+    final sent = notifs.where((n) => n.isSent).toList();
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -16,6 +73,14 @@ class NotificationsScreen extends StatelessWidget {
           'Automated Patient Reminders',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Schedule Reminder',
+            icon: const Icon(Icons.add_alert, color: AppColors.primary),
+            onPressed: () => _showScheduleModal(context, ref),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -43,39 +108,52 @@ class NotificationsScreen extends StatelessWidget {
           ),
           const Text('Pending Reminders', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
           const SizedBox(height: 8),
-          _buildItem(
-            patient: 'Elena Garcia',
-            type: 'Vaccine 2nd Dose Due',
-            time: 'Scheduled for tomorrow, 8:00 AM',
-            isSent: false,
-          ),
-          _buildItem(
-            patient: 'Juan Dela Cruz',
-            type: 'Pending Invoice #INV-2026-0891 Reminder',
-            time: 'Scheduled for in 3 days',
-            isSent: false,
-          ),
+          if (pending.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('No pending reminders in queue.', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            )
+          else
+            ...pending.map((n) => _buildItem(
+                  context: context,
+                  ref: ref,
+                  id: n.id,
+                  patient: n.patientName ?? 'Patient ${n.patientId}',
+                  type: n.type.replaceAll('_', ' ').toUpperCase(),
+                  time: n.scheduledFor != null
+                      ? 'Scheduled for: ${n.scheduledFor.toString().substring(0, 16)}'
+                      : 'Scheduled',
+                  isSent: false,
+                )),
           const SizedBox(height: 20),
           const Text('Sent History', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
           const SizedBox(height: 8),
-          _buildItem(
-            patient: 'Maria Santos',
-            type: 'Payment Receipt & Visit Summary',
-            time: 'Sent today, 9:45 AM via SMS',
-            isSent: true,
-          ),
-          _buildItem(
-            patient: 'Roberto Lim',
-            type: 'Doctor Follow-up Schedule',
-            time: 'Sent yesterday, 2:00 PM via Email',
-            isSent: true,
-          ),
+          if (sent.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('No sent notifications yet.', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            )
+          else
+            ...sent.map((n) => _buildItem(
+                  context: context,
+                  ref: ref,
+                  id: n.id,
+                  patient: n.patientName ?? 'Patient ${n.patientId}',
+                  type: n.type.replaceAll('_', ' ').toUpperCase(),
+                  time: n.sentAt != null
+                      ? 'Sent: ${n.sentAt.toString().substring(0, 16)} via SMS/Email'
+                      : 'Delivered',
+                  isSent: true,
+                )),
         ],
       ),
     );
   }
 
   Widget _buildItem({
+    required BuildContext context,
+    required WidgetRef ref,
+    required String id,
     required String patient,
     required String type,
     required String time,
@@ -109,7 +187,21 @@ class NotificationsScreen extends StatelessWidget {
               ],
             ),
           ),
-          isSent ? StatusBadge.paid() : StatusBadge.warning(text: 'Pending'),
+          if (!isSent)
+            TextButton(
+              onPressed: () {
+                ref.read(notificationListProvider.notifier).sendNotification(id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Dispatched reminder via Twilio SMS!'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              },
+              child: const Text('Send Now', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            )
+          else
+            StatusBadge.paid(),
         ],
       ),
     );
