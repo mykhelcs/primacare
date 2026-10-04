@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:primacare/domain/models/clinical_encounter.dart';
 import 'package:primacare/domain/models/invoice.dart';
-import 'package:primacare/domain/models/inventory_item.dart';
 import 'package:primacare/data/repositories/invoice_repository.dart';
 import 'package:primacare/data/repositories/inventory_repository.dart';
 
