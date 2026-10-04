@@ -21,6 +21,28 @@ class InventoryItem {
 
   bool get isLowStock => totalStock <= reorderLevel;
 
+  InventoryItem copyWith({
+    String? id,
+    String? name,
+    String? barcode,
+    String? unit,
+    double? unitCost,
+    String? category,
+    int? reorderLevel,
+    int? totalStock,
+  }) {
+    return InventoryItem(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      barcode: barcode ?? this.barcode,
+      unit: unit ?? this.unit,
+      unitCost: unitCost ?? this.unitCost,
+      category: category ?? this.category,
+      reorderLevel: reorderLevel ?? this.reorderLevel,
+      totalStock: totalStock ?? this.totalStock,
+    );
+  }
+
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
     return InventoryItem(
       id: json['id'] as String,
@@ -68,6 +90,24 @@ class InventoryBatch {
   bool get isExpired => expiryDate.isBefore(DateTime.now());
   int get daysUntilExpiry => expiryDate.difference(DateTime.now()).inDays;
   bool get isCriticalExpiry => daysUntilExpiry <= 30 && daysUntilExpiry >= 0;
+
+  InventoryBatch copyWith({
+    String? id,
+    String? itemId,
+    String? batchNumber,
+    int? quantityRemaining,
+    DateTime? expiryDate,
+    DateTime? receivedDate,
+  }) {
+    return InventoryBatch(
+      id: id ?? this.id,
+      itemId: itemId ?? this.itemId,
+      batchNumber: batchNumber ?? this.batchNumber,
+      quantityRemaining: quantityRemaining ?? this.quantityRemaining,
+      expiryDate: expiryDate ?? this.expiryDate,
+      receivedDate: receivedDate ?? this.receivedDate,
+    );
+  }
 
   factory InventoryBatch.fromJson(Map<String, dynamic> json) {
     return InventoryBatch(

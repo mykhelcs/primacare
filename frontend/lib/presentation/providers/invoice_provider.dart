@@ -44,6 +44,53 @@ class OpenInvoicesNotifier extends AsyncNotifier<List<Invoice>> {
     return result;
   }
 
+  Future<Invoice> createInvoiceForPatient({
+    required String patientId,
+    String? patientName,
+  }) async {
+    final repo = ref.read(invoiceRepositoryProvider);
+    final inv = await repo.createInvoice(
+      patientId: patientId,
+      patientName: patientName,
+    );
+    await refresh();
+    return inv;
+  }
+
+  Future<Invoice?> addServiceItem({
+    required String invoiceId,
+    required String serviceName,
+    required double fee,
+  }) async {
+    final repo = ref.read(invoiceRepositoryProvider);
+    final updated = await repo.addServiceItem(
+      invoiceId: invoiceId,
+      serviceName: serviceName,
+      fee: fee,
+    );
+    await refresh();
+    ref.invalidate(invoiceDetailProvider(invoiceId));
+    return updated;
+  }
+
+  Future<Invoice?> applyDiscount({
+    required String invoiceId,
+    required String discountType,
+    double percentage = 20.0,
+    String? discountIdNumber,
+  }) async {
+    final repo = ref.read(invoiceRepositoryProvider);
+    final updated = await repo.applyDiscount(
+      invoiceId: invoiceId,
+      discountType: discountType,
+      percentage: percentage,
+      discountIdNumber: discountIdNumber,
+    );
+    await refresh();
+    ref.invalidate(invoiceDetailProvider(invoiceId));
+    return updated;
+  }
+
   Future<bool> markInvoicePaid(String invoiceId) async {
     final repo = ref.read(invoiceRepositoryProvider);
     final success = await repo.markAsPaid(invoiceId);

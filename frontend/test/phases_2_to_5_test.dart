@@ -65,7 +65,7 @@ void main() {
         vaccineName: 'Polio Booster',
         dueDate: DateTime.now().add(const Duration(days: 7)),
       );
-      expect(scheduledId != null, true);
+      expect(scheduledId.isNotEmpty, true);
 
       final sentSuccess = await repo.sendManualNotification('n1');
       expect(sentSuccess, true);

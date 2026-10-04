@@ -1,57 +1,119 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/models/notification_item.dart';
 import '../providers/notification_provider.dart';
+import '../providers/patient_provider.dart';
 import '../widgets/status_badge.dart';
 
 class NotificationsScreen extends ConsumerWidget {
   const NotificationsScreen({super.key});
 
   void _showScheduleModal(BuildContext context, WidgetRef ref) {
-    final patientIdCtrl = TextEditingController(text: 'p4');
+    final patients = ref.read(patientListProvider).value ?? [];
+    String selectedPatientId = patients.isNotEmpty ? patients.first.id : 'p1';
+    String selectedPatientName = patients.isNotEmpty ? patients.first.fullName : 'Selected Patient';
     final vaccineCtrl = TextEditingController(text: 'Hepatitis B Booster');
+    int daysAhead = 7;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Schedule Vaccine Reminder', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: patientIdCtrl,
-              decoration: const InputDecoration(labelText: 'Patient ID'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          title: const Text(
+            'Schedule Automated Reminder',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (patients.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedPatientId,
+                    decoration: const InputDecoration(labelText: 'Recipient Patient *'),
+                    items: patients
+                        .map(
+                          (p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              '${p.fullName} (${p.contactNumber ?? 'No Phone'})',
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setModalState(() {
+                          selectedPatientId = val;
+                          final match = patients.where((p) => p.id == val).firstOrNull;
+                          if (match != null) selectedPatientName = match.fullName;
+                        });
+                      }
+                    },
+                  )
+                else
+                  TextField(
+                    decoration: const InputDecoration(labelText: 'Patient ID'),
+                    onChanged: (val) => selectedPatientId = val.trim(),
+                  ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: vaccineCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Reminder Message / Purpose *',
+                    hintText: 'e.g. Hepatitis B Vaccine Booster / 7-Day Follow-Up',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: daysAhead,
+                  decoration: const InputDecoration(labelText: 'Schedule Dispatch In'),
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('1 Day (Tomorrow 8:00 AM)')),
+                    DropdownMenuItem(value: 3, child: Text('3 Days Ahead')),
+                    DropdownMenuItem(value: 7, child: Text('7 Days Ahead (1 Week)')),
+                    DropdownMenuItem(value: 14, child: Text('14 Days Ahead (2 Weeks)')),
+                    DropdownMenuItem(value: 30, child: Text('30 Days Ahead (1 Month)')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setModalState(() => daysAhead = val);
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: vaccineCtrl,
-              decoration: const InputDecoration(labelText: 'Vaccine / Reminder Name'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final message = vaccineCtrl.text.trim();
+                if (message.isNotEmpty) {
+                  ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
+                        patientId: selectedPatientId,
+                        patientName: selectedPatientName,
+                        vaccineName: message,
+                        dueDate: DateTime.now().add(Duration(days: daysAhead)),
+                      );
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Automated reminder queued for $selectedPatientName!'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Schedule Reminder'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
-                    patientId: patientIdCtrl.text,
-                    vaccineName: vaccineCtrl.text,
-                    dueDate: DateTime.now().add(const Duration(days: 7)),
-                  );
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Reminder queued in database! Automated runner will dispatch.'),
-                  backgroundColor: AppColors.success,
-                ),
-              );
-            },
-            child: const Text('Schedule'),
-          ),
-        ],
       ),
     );
   }
@@ -61,8 +123,16 @@ class NotificationsScreen extends ConsumerWidget {
     final notifsAsync = ref.watch(notificationListProvider);
     final notifs = notifsAsync.value ?? [];
 
-    final pending = notifs.where((n) => n.isPending).toList();
-    final sent = notifs.where((n) => n.isSent).toList();
+    // O(N) Single-Pass Partitioning into Pending and Sent Lists
+    final pending = <NotificationItem>[];
+    final sent = <NotificationItem>[];
+    for (final n in notifs) {
+      if (n.isPending) {
+        pending.add(n);
+      } else {
+        sent.add(n);
+      }
+    }
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -106,7 +176,10 @@ class NotificationsScreen extends ConsumerWidget {
               ],
             ),
           ),
-          const Text('Pending Reminders', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+          Text(
+            'Pending Reminders (${pending.length})',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
           const SizedBox(height: 8),
           if (pending.isEmpty)
             const Padding(
@@ -126,7 +199,10 @@ class NotificationsScreen extends ConsumerWidget {
                   isSent: false,
                 )),
           const SizedBox(height: 20),
-          const Text('Sent History', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+          Text(
+            'Sent History (${sent.length})',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
           const SizedBox(height: 8),
           if (sent.isEmpty)
             const Padding(
@@ -193,7 +269,7 @@ class NotificationsScreen extends ConsumerWidget {
                 ref.read(notificationListProvider.notifier).sendNotification(id);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Dispatched reminder via Twilio SMS!'),
+                    content: Text('Dispatched reminder via Twilio SMS & SendGrid Email!'),
                     backgroundColor: AppColors.success,
                   ),
                 );

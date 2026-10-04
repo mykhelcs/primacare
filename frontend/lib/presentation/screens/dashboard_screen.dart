@@ -13,11 +13,15 @@ import '../widgets/status_badge.dart';
 class DashboardScreen extends ConsumerWidget {
   final VoidCallback? onScanTapped;
   final ValueChanged<String>? onInvoiceTapped;
+  final ValueChanged<int>? onNavigateTab;
+  final ValueChanged<String>? onNewEncounterStarted;
 
   const DashboardScreen({
     super.key,
     this.onScanTapped,
     this.onInvoiceTapped,
+    this.onNavigateTab,
+    this.onNewEncounterStarted,
   });
 
   Future<void> _refreshAll(WidgetRef ref) async {
@@ -27,20 +31,102 @@ class DashboardScreen extends ConsumerWidget {
     ref.invalidate(dashboardMetricsProvider);
   }
 
-  void _seedDemoData(BuildContext context, WidgetRef ref) async {
+  void _initializeClinicData(BuildContext context, WidgetRef ref) async {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Seeding demo clinical data into Supabase...')),
+      const SnackBar(content: Text('Synchronizing clinical essentials with Supabase...')),
     );
     await SupabaseSeeder.seedInitialClinicalData();
     await _refreshAll(ref);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Clinical data synchronized!'),
+          content: Text('Clinic essentials & formulary ready!'),
           backgroundColor: AppColors.success,
         ),
       );
     }
+  }
+
+  void _showQuickNewEncounterDialog(BuildContext context, WidgetRef ref) {
+    final patients = ref.read(patientListProvider).value ?? [];
+    if (patients.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please register a patient first.'), backgroundColor: AppColors.warning),
+      );
+      return;
+    }
+
+    String selectedPatientId = patients.first.id;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final pat = patients.where((p) => p.id == selectedPatientId).firstOrNull ?? patients.first;
+          selectedPatientId = pat.id;
+
+          return AlertDialog(
+            title: const Text('Start New Patient Encounter / Bill', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('Select Patient for Consultation:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedPatientId,
+                  isExpanded: true,
+                  items: patients
+                      .map((p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text('${p.fullName} (${p.contactNumber ?? 'No phone'})', style: const TextStyle(fontSize: 13)),
+                          ))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setModalState(() => selectedPatientId = val);
+                  },
+                ),
+                const SizedBox(height: 12),
+                if (pat.allergies != null && pat.allergies!.isNotEmpty && pat.allergies != 'None recorded')
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.danger.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.danger),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text('Allergies: ${pat.allergies}', style: const TextStyle(fontSize: 11, color: AppColors.danger, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  final inv = await ref
+                      .read(openInvoicesProvider.notifier)
+                      .createInvoiceForPatient(
+                        patientId: pat.id,
+                        patientName: pat.fullName,
+                      );
+                  onNewEncounterStarted?.call(inv.id);
+                  onInvoiceTapped?.call(inv.id);
+                },
+                child: const Text('Open Invoice'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -48,6 +134,17 @@ class DashboardScreen extends ConsumerWidget {
     final staff = ref.watch(currentStaffProfileProvider);
     final metricsAsync = ref.watch(dashboardMetricsProvider);
     final metrics = metricsAsync.value ?? DashboardMetrics.empty();
+
+    final allInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    double collectedToday = 0.0;
+    double unpaidReceivables = 0.0;
+    for (final inv in allInvoices) {
+      if (inv.isPaid) {
+        collectedToday += inv.totalAmount;
+      } else {
+        unpaidReceivables += inv.totalAmount;
+      }
+    }
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -59,12 +156,8 @@ class DashboardScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              staff != null ? 'Hello, ${staff.fullName}' : 'PrimaCare Mobile Clinic',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              ),
+              staff != null ? 'Hello, ${staff.fullName}' : 'PrimaCare Clinic',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 2),
@@ -77,21 +170,14 @@ class DashboardScreen extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    staff?.role.name.toUpperCase() ?? 'NURSE',
-                    style: const TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+                    staff?.role.name.toUpperCase() ?? 'ADMIN / OWNER',
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Text(
-                  'Connected to Supabase',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white70,
-                  ),
+                Text(
+                  staff?.clinic.name ?? 'Central Clinic',
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
                 ),
               ],
             ),
@@ -99,9 +185,9 @@ class DashboardScreen extends ConsumerWidget {
         ),
         actions: [
           IconButton(
-            tooltip: 'Seed Initial Data',
+            tooltip: 'Initialize Clinic Essentials',
             icon: const Icon(Icons.cloud_sync, color: Colors.white),
-            onPressed: () => _seedDemoData(context, ref),
+            onPressed: () => _initializeClinicData(context, ref),
           ),
           const SizedBox(width: 8),
         ],
@@ -122,13 +208,19 @@ class DashboardScreen extends ConsumerWidget {
                 physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
-                childAspectRatio: 1.6,
+                childAspectRatio: 1.55,
                 children: [
                   StatCard(
+                    icon: '💰',
+                    value: '₱${collectedToday.toStringAsFixed(0)}',
+                    label: 'Collected Today',
+                    valueColor: AppColors.success,
+                  ),
+                  StatCard(
                     icon: '🧾',
-                    value: '${metrics.openInvoicesCount}',
-                    label: 'Open invoices',
-                    valueColor: AppColors.primary,
+                    value: '₱${unpaidReceivables.toStringAsFixed(0)}',
+                    label: 'Unpaid Receivables',
+                    valueColor: AppColors.warning,
                   ),
                   StatCard(
                     icon: '👥',
@@ -139,46 +231,159 @@ class DashboardScreen extends ConsumerWidget {
                   StatCard(
                     icon: '⚠️',
                     value: '${metrics.expiryAlertsCount}',
-                    label: 'Expiry alerts',
-                    valueColor: AppColors.warning,
-                  ),
-                  StatCard(
-                    icon: '💰',
-                    value: '₱${metrics.billedTodayAmount.toStringAsFixed(0)}',
-                    label: 'Total Billed',
-                    valueColor: AppColors.success,
+                    label: 'Expiring Batches (<30d)',
+                    valueColor: AppColors.danger,
                   ),
                 ],
               ),
               const SizedBox(height: 16),
 
-              // Mobile Primary Action Button
-              ElevatedButton(
-                onPressed: onScanTapped,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.qr_code_scanner, color: Colors.white, size: 22),
-                    SizedBox(width: 10),
-                    Text(
-                      'Scan Item to Bill (Point of Care)',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+              // Owner Quick Action Bar
+              const Text(
+                'Clinic Operations Shortcuts',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showQuickNewEncounterDialog(context, ref),
+                      icon: const Icon(Icons.add_circle_outline, size: 16, color: Colors.white),
+                      label: const Text('New Encounter', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: onScanTapped,
+                      icon: const Icon(Icons.qr_code_scanner, size: 16, color: Colors.white),
+                      label: const Text('Scan & Bill', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => onNavigateTab?.call(1), // Patients tab
+                      icon: const Icon(Icons.person_add_alt_1, size: 16, color: AppColors.primary),
+                      label: const Text('Patients', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => onNavigateTab?.call(5), // QR & Barcodes tab
+                      icon: const Icon(Icons.qr_code_2, size: 16, color: AppColors.accent),
+                      label: const Text('Barcodes', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.accent)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => onNavigateTab?.call(7), // Receive stock tab (index 7)
+                      icon: const Icon(Icons.inventory_2_outlined, size: 16, color: AppColors.textPrimary),
+                      label: const Text('Stock In', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // Clinic Operations Roadmap & Verification Card for New Users
+              Container(
+                margin: const EdgeInsets.only(bottom: 20),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.verified, size: 18, color: AppColors.success),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Clinic Operational Roadmap & Assurance',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.successLight,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            'SYSTEM ACTIVE',
+                            style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildStepRow(
+                      stepNumber: '1',
+                      title: 'Enroll Patient',
+                      description: 'Add patient records with allergy warnings and contact numbers.',
+                      actionText: 'Directory',
+                      onTap: () => onNavigateTab?.call(1),
+                    ),
+                    const Divider(height: 16),
+                    _buildStepRow(
+                      stepNumber: '2',
+                      title: 'Inventory & Barcodes',
+                      description: 'Formulary items have auto-generated barcodes ready for label printing.',
+                      actionText: 'Barcodes',
+                      onTap: () => onNavigateTab?.call(5),
+                    ),
+                    const Divider(height: 16),
+                    _buildStepRow(
+                      stepNumber: '3',
+                      title: 'Scan & Dispense',
+                      description: 'Point camera or USB scanner gun to auto-deduct earliest batch (FIFO).',
+                      actionText: 'Scanner',
+                      onTap: onScanTapped,
+                    ),
+                    const Divider(height: 16),
+                    _buildStepRow(
+                      stepNumber: '4',
+                      title: 'Settle Bill & Print Receipt',
+                      description: 'Collect payment, mark invoice as paid, and print 58mm ESC/POS receipt.',
+                      actionText: 'Invoices',
+                      onTap: () => onNavigateTab?.call(2),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
 
               // Dynamic Recent Invoices Header
               Row(
@@ -222,7 +427,7 @@ class DashboardScreen extends ConsumerWidget {
                       ),
                       const SizedBox(height: 4),
                       const Text(
-                        'Tap "Seed Initial Data" above or register a patient.',
+                        'Tap "New Encounter" above or register a patient.',
                         style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       ),
                     ],
@@ -311,6 +516,79 @@ class DashboardScreen extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStepRow({
+    required String stepNumber,
+    required String title,
+    required String description,
+    required String actionText,
+    required VoidCallback? onTap,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 12,
+          backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+          child: Text(
+            stepNumber,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primary,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                actionText,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary,
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 14, color: AppColors.primary),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/services/security_service.dart';
 import '../providers/auth_provider.dart';
+import '../providers/invoice_provider.dart';
 import '../../data/services/offline_sync_service.dart';
 import '../../domain/models/staff_profile.dart';
 import '../widgets/biometric_unlock_dialog.dart';
@@ -10,6 +11,7 @@ import 'dashboard_screen.dart';
 import 'patient_list_screen.dart';
 import 'invoice_detail_screen.dart';
 import 'barcode_scanner_screen.dart';
+import 'barcode_catalog_screen.dart';
 import 'inventory_list_screen.dart';
 import 'expiry_alerts_screen.dart';
 import 'receive_stock_screen.dart';
@@ -79,6 +81,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     'Invoice Detail',
     'Barcode Scanner',
     'Inventory List',
+    'QR & Barcodes',
     'Expiry Alerts',
     'Receive Stock',
     'Notifications',
@@ -92,6 +95,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     '🧾',
     '📷',
     '📦',
+    '🏷️',
     '⚠️',
     '📥',
     '🔔',
@@ -143,25 +147,30 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     final staff = ref.watch(currentStaffProfileProvider);
     final isDesktop = MediaQuery.of(context).size.width >= 900;
 
+    final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    final activeInvoiceId = _selectedInvoiceId ??
+        (openInvoices.isNotEmpty ? openInvoices.first.id : 'inv-1');
+
     final screens = <Widget>[
       DashboardScreen(
-        onScanTapped: () => _openScanner(),
+        onScanTapped: () => _openScanner(forInvoiceId: activeInvoiceId),
         onInvoiceTapped: (id) => _openInvoice(id),
+        onNavigateTab: (tabIdx) => setState(() => _selectedIndex = tabIdx),
+        onNewEncounterStarted: (invId) => _openInvoice(invId),
       ),
       PatientListScreen(
-        onPatientTapped: (patId) {
-          _openInvoice('inv-1');
-        },
+        onStartEncounter: (invId) => _openInvoice(invId),
       ),
       InvoiceDetailScreen(
-        invoiceId: _selectedInvoiceId ?? 'inv-1',
-        onScanMore: () => _openScanner(forInvoiceId: _selectedInvoiceId),
+        invoiceId: activeInvoiceId,
+        onScanMore: () => _openScanner(forInvoiceId: activeInvoiceId),
       ),
       BarcodeScannerScreen(
-        invoiceId: _selectedInvoiceId,
+        invoiceId: activeInvoiceId,
         onDispensed: () => setState(() => _selectedIndex = 2),
       ),
       const InventoryListScreen(),
+      const BarcodeCatalogScreen(),
       const ExpiryAlertsScreen(),
       const ReceiveStockScreen(),
       const NotificationsScreen(),
@@ -223,14 +232,27 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Image.asset(
+                          'assets/images/primacare_logo.png',
+                          height: 24,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           CircleAvatar(
                             backgroundColor: AppColors.accent,
-                            radius: 20,
+                            radius: 18,
                             child: Text(
                               staff?.role.name == 'doctor' ? '🩺' : (staff?.role.name == 'admin' ? '💼' : '👩‍⚕️'),
-                              style: const TextStyle(fontSize: 18),
+                              style: const TextStyle(fontSize: 16),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -381,29 +403,18 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: AppColors.accent,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                alignment: Alignment.center,
-                                child: const Text('🏥', style: TextStyle(fontSize: 18)),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: const [
-                                    Text('PrimaCare', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
-                                    Text('Smart Clinic System', style: TextStyle(color: Colors.white70, fontSize: 11)),
-                                  ],
-                                ),
-                              ),
-                            ],
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Image.asset(
+                              'assets/images/primacare_logo.png',
+                              height: 32,
+                              fit: BoxFit.contain,
+                              semanticLabel: 'PrimaCare',
+                            ),
                           ),
                           const SizedBox(height: 12),
                           Text(

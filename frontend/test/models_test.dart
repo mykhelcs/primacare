@@ -12,13 +12,22 @@ void main() {
         'date_of_birth': '1990-05-15',
         'contact_number': '+639171234567',
         'email': 'juan@example.ph',
+        'sex': 'Male',
+        'allergies': 'Penicillin, NSAIDs',
+        'address': 'Quezon City, Philippines',
+        'emergency_contact': '+639188889999',
       };
 
       final patient = Patient.fromJson(json);
       expect(patient.id, 'p1');
       expect(patient.fullName, 'Juan Dela Cruz');
       expect(patient.contactNumber, '+639171234567');
-      expect(patient.toJson()['full_name'], 'Juan Dela Cruz');
+      expect(patient.sex, 'Male');
+      expect(patient.allergies, 'Penicillin, NSAIDs');
+      expect(patient.address, 'Quezon City, Philippines');
+      expect(patient.emergencyContact, '+639188889999');
+      expect(patient.toJson()['allergies'], 'Penicillin, NSAIDs');
+      expect(patient.toJson()['sex'], 'Male');
     });
 
     test('InventoryItem model computes stock and expiry state', () {

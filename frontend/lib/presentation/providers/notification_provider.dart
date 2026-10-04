@@ -19,24 +19,57 @@ class NotificationListNotifier extends AsyncNotifier<List<NotificationItem>> {
   }
 
   Future<void> sendNotification(String id) async {
+    final current = state.value ?? [];
+    state = AsyncData(current.map((n) {
+      if (n.id == id) {
+        return NotificationItem(
+          id: n.id,
+          patientId: n.patientId,
+          patientName: n.patientName,
+          type: n.type,
+          message: n.message,
+          scheduledFor: n.scheduledFor,
+          sentAt: DateTime.now(),
+          status: 'sent',
+        );
+      }
+      return n;
+    }).toList());
+
     final repo = ref.read(notificationRepositoryProvider);
-    final success = await repo.sendManualNotification(id);
-    if (success) {
-      state = AsyncData(await repo.getNotificationQueue());
-    }
+    await repo.sendManualNotification(id);
+    final refreshed = await repo.getNotificationQueue();
+    state = AsyncData(refreshed);
   }
 
   Future<void> scheduleVaccineReminder({
     required String patientId,
     required String vaccineName,
     required DateTime dueDate,
+    String? patientName,
   }) async {
     final repo = ref.read(notificationRepositoryProvider);
-    await repo.scheduleVaccineReminder(
+    final id = await repo.scheduleVaccineReminder(
       patientId: patientId,
       vaccineName: vaccineName,
       dueDate: dueDate,
+      patientName: patientName,
     );
-    state = AsyncData(await repo.getNotificationQueue());
+
+    final newNotif = NotificationItem(
+      id: id,
+      patientId: patientId,
+      patientName: patientName,
+      type: 'vaccine_reminder',
+      message: 'Reminder for $vaccineName due on ${dueDate.toIso8601String().substring(0, 10)}',
+      scheduledFor: dueDate,
+      status: 'pending',
+    );
+
+    final current = state.value ?? [];
+    state = AsyncData([newNotif, ...current.where((n) => n.id != id)]);
+
+    final refreshed = await repo.getNotificationQueue();
+    state = AsyncData(refreshed);
   }
 }

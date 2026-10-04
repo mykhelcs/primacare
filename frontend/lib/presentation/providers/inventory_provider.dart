@@ -40,6 +40,30 @@ class InventoryListNotifier extends AsyncNotifier<List<InventoryItem>> {
     await refresh();
     return batchId;
   }
+
+  Future<InventoryItem> createItem({
+    required String name,
+    required String barcode,
+    required String unit,
+    required double unitCost,
+    required String category,
+    int reorderLevel = 10,
+  }) async {
+    final repo = ref.read(inventoryRepositoryProvider);
+    final newItem = await repo.createInventoryItem(
+      name: name,
+      barcode: barcode,
+      unit: unit,
+      unitCost: unitCost,
+      category: category,
+      reorderLevel: reorderLevel,
+    );
+    final current = state.value ?? [];
+    state = AsyncData([newItem, ...current.where((i) => i.id != newItem.id)]);
+    final refreshed = await repo.getInventoryItems();
+    state = AsyncData(refreshed);
+    return newItem;
+  }
 }
 
 final expiringBatchesProvider = FutureProvider<List<InventoryBatch>>((ref) async {

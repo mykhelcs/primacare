@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:primacare/main.dart';
@@ -25,17 +26,23 @@ void main() {
     expect(find.text('Staff Authentication'), findsOneWidget);
     expect(find.text('Sign In to Clinic'), findsOneWidget);
 
-    // Tap quick demo login as Nurse
-    final nurseBtn = find.text('👩‍⚕️ Nurse');
-    expect(nurseBtn, findsOneWidget);
-    await tester.tap(nurseBtn);
+    // Enter real clinic credentials
+    final textFields = find.byType(TextFormField);
+    expect(textFields, findsNWidgets(2));
+    await tester.enterText(textFields.at(0), 'dr.santos@primacare.ph');
+    await tester.enterText(textFields.at(1), 'password123');
+
+    // Tap Sign In button
+    final signInBtn = find.widgetWithText(ElevatedButton, 'Sign In to Clinic');
+    expect(signInBtn, findsOneWidget);
+    await tester.tap(signInBtn);
 
     // Settle async login
     await tester.pumpAndSettle();
 
     // Now clinical operations shell is unlocked and rendered
-    expect(find.textContaining('Hello, Nurse Sarah Jenkins'), findsOneWidget);
-    expect(find.text('Open invoices'), findsOneWidget);
+    expect(find.textContaining('Hello, Dr.'), findsOneWidget);
+    expect(find.text('Unpaid Receivables'), findsOneWidget);
     expect(find.text('Total Patients'), findsOneWidget);
   });
 }

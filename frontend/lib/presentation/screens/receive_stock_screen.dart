@@ -17,8 +17,17 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
   final _batchController = TextEditingController();
   final _qtyController = TextEditingController();
   final _expiryController = TextEditingController();
-  String _selectedItem = 'Hepatitis B Pediatric Vaccine';
+  String? _selectedItemId;
+  String _selectedItemName = '';
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _batchController.text = 'LOT-${now.year}${now.month.toString().padLeft(2, '0')}-01';
+    _expiryController.text = now.add(const Duration(days: 365)).toIso8601String().substring(0, 10);
+  }
 
   @override
   void dispose() {
@@ -40,6 +49,16 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
       return;
     }
 
+    if (_selectedItemId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an inventory item to receive.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     final expiry = DateTime.tryParse(_expiryController.text) ??
         DateTime.now().add(const Duration(days: 365));
@@ -49,12 +68,14 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
         : 'LOT-${DateTime.now().millisecondsSinceEpoch}';
 
     final repo = ref.read(inventoryRepositoryProvider);
-    final batchId = await repo.receiveStockBatch(
-      itemId: 'i1',
+    await repo.receiveStockBatch(
+      itemId: _selectedItemId!,
       batchNumber: batchNum,
       quantity: qty,
       expiryDate: expiry,
     );
+
+    await ref.read(inventoryListProvider.notifier).refresh();
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -62,14 +83,14 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Successfully received $qty units into batch ($batchId)!'),
+          content: Text('Successfully received $qty units into batch ($batchNum)!'),
           backgroundColor: AppColors.success,
           action: SnackBarAction(
             label: 'Print Labels',
             textColor: Colors.white,
             onPressed: () {
               final labelText = ThermalPrinterService().generateBatchBarcodeLabelText(
-                itemName: _selectedItem,
+                itemName: _selectedItemName,
                 batchNumber: batchNum,
                 barcode: 'BAR-${batchNum.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
                 expiryDate: expiry,
@@ -86,21 +107,30 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
           ),
         ),
       );
-      _batchController.clear();
       _qtyController.clear();
-      _expiryController.clear();
+      _batchController.text = 'LOT-${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().second}';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final inventoryAsync = ref.watch(inventoryListProvider);
+    final items = (inventoryAsync.value ?? [])
+        .where((i) => i.category != 'Services')
+        .toList();
+
+    if (_selectedItemId == null && items.isNotEmpty) {
+      _selectedItemId = items.first.id;
+      _selectedItemName = items.first.name;
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.surface,
         elevation: 0,
         title: const Text(
-          'Receive Stock (Add Batch)',
+          'Receive Inbound Stock (Add Batch)',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
       ),
@@ -117,21 +147,34 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Select Inventory Item',
+                'Select Inventory Item from Clinic Formulary',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
               ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                initialValue: _selectedItem,
-                items: [
-                  'Hepatitis B Pediatric Vaccine',
-                  'MMR Pediatric Vaccine',
-                  'Disposable Syringe 3ml',
-                  'Paracetamol 500mg Tablets',
-                ]
-                    .map((item) => DropdownMenuItem(value: item, child: Text(item, style: const TextStyle(fontSize: 13))))
+                initialValue: _selectedItemId,
+                isExpanded: true,
+                items: items
+                    .map((item) => DropdownMenuItem(
+                          value: item.id,
+                          child: Text(
+                            '${item.name} (${item.category} · ${item.unit})',
+                            style: const TextStyle(fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ))
                     .toList(),
-                onChanged: (val) => setState(() => _selectedItem = val!),
+                onChanged: (val) {
+                  if (val != null) {
+                    final found = items.where((i) => i.id == val).firstOrNull;
+                    if (found != null) {
+                      setState(() {
+                        _selectedItemId = val;
+                        _selectedItemName = found.name;
+                      });
+                    }
+                  }
+                },
               ),
               const SizedBox(height: 16),
               const Text(

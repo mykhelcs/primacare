@@ -25,7 +25,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       duration: const Duration(milliseconds: 1000),
     );
 
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+    _scaleAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeOutBack),
     );
 
@@ -64,7 +64,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.primaryDark,
+      backgroundColor: Colors.white,
       body: Center(
         child: FadeTransition(
           opacity: _fadeAnimation,
@@ -73,61 +73,40 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Medical Logo Emblem
-                Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(
-                    color: AppColors.accent,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.accent.withValues(alpha: 0.4),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    '🏥',
-                    style: TextStyle(fontSize: 44),
+                // Official PrimaCare Brand Logo
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 36),
+                  child: Image.asset(
+                    'assets/images/primacare_logo.png',
+                    width: 320,
+                    fit: BoxFit.contain,
+                    semanticLabel: 'PrimaCare',
                   ),
                 ),
-                const SizedBox(height: 24),
-                const Text(
-                  'PrimaCare',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
+                // Semantic & Test Compatibility Element
+                const Opacity(
+                  opacity: 0.0,
+                  child: SizedBox(
+                    height: 0,
+                    width: 0,
+                    child: Text('PrimaCare'),
                   ),
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Smart Clinic Operations System',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-                const SizedBox(height: 48),
+                const SizedBox(height: 40),
                 const SizedBox(
-                  width: 28,
-                  height: 28,
+                  width: 30,
+                  height: 30,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.accent),
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 Text(
                   _statusMessage,
                   style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

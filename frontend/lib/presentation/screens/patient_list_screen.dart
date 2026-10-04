@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../providers/patient_provider.dart';
-import '../widgets/status_badge.dart';
+import '../providers/invoice_provider.dart';
 import 'patient_profile_screen.dart';
 
 class PatientListScreen extends ConsumerStatefulWidget {
   final ValueChanged<String>? onPatientTapped;
+  final ValueChanged<String>? onStartEncounter;
 
-  const PatientListScreen({super.key, this.onPatientTapped});
+  const PatientListScreen({
+    super.key,
+    this.onPatientTapped,
+    this.onStartEncounter,
+  });
 
   @override
   ConsumerState<PatientListScreen> createState() => _PatientListScreenState();
@@ -28,33 +33,75 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
     final phoneCtrl = TextEditingController();
     final dobCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
+    final sexCtrl = TextEditingController(text: 'Female');
+    final allergiesCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+    final emergencyCtrl = TextEditingController();
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Register New Patient', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        title: const Text('Register Clinical Patient', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'Full Name *'),
+                decoration: const InputDecoration(labelText: 'Full Name *', hintText: 'e.g. Maria Santos'),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: dobCtrl,
-                decoration: const InputDecoration(labelText: 'Date of Birth (YYYY-MM-DD)'),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: dobCtrl,
+                      decoration: const InputDecoration(labelText: 'DOB (YYYY-MM-DD)', hintText: '1995-04-12'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: sexCtrl.text,
+                      decoration: const InputDecoration(labelText: 'Sex'),
+                      items: ['Female', 'Male', 'Other']
+                          .map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13))))
+                          .toList(),
+                      onChanged: (val) {
+                        if (val != null) sexCtrl.text = val;
+                      },
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               TextField(
                 controller: phoneCtrl,
-                decoration: const InputDecoration(labelText: 'Contact Number'),
+                decoration: const InputDecoration(labelText: 'Contact Phone', hintText: '+63 9XX XXX XXXX'),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
+              TextField(
+                controller: allergiesCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Known Allergies / Pre-existing',
+                  hintText: 'e.g. Penicillin, Aspirin, Eggs',
+                  prefixIcon: Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: emergencyCtrl,
+                decoration: const InputDecoration(labelText: 'Emergency Contact & Relation', hintText: 'e.g. Juan (+63 917...)'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: addressCtrl,
+                decoration: const InputDecoration(labelText: 'Home / Clinic Address', hintText: 'e.g. Quezon City'),
+              ),
+              const SizedBox(height: 10),
               TextField(
                 controller: emailCtrl,
-                decoration: const InputDecoration(labelText: 'Email Address'),
+                decoration: const InputDecoration(labelText: 'Email Address', hintText: 'patient@example.ph'),
               ),
             ],
           ),
@@ -72,19 +119,26 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                       dateOfBirth: dobCtrl.text.trim().isNotEmpty ? dobCtrl.text.trim() : null,
                       contactNumber: phoneCtrl.text.trim().isNotEmpty ? phoneCtrl.text.trim() : null,
                       email: emailCtrl.text.trim().isNotEmpty ? emailCtrl.text.trim() : null,
+                      sex: sexCtrl.text,
+                      allergies: allergiesCtrl.text.trim().isNotEmpty ? allergiesCtrl.text.trim() : 'None recorded',
+                      address: addressCtrl.text.trim().isNotEmpty ? addressCtrl.text.trim() : null,
+                      emergencyContact: emergencyCtrl.text.trim().isNotEmpty ? emergencyCtrl.text.trim() : null,
                     );
                 if (ctx.mounted && mounted) {
                   Navigator.pop(ctx);
+                  setState(() {
+                    _searchController.clear();
+                  });
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Registered ${newPat.fullName} in Supabase!'),
+                      content: Text('Registered ${newPat.fullName} in Clinical Records!'),
                       backgroundColor: AppColors.success,
                     ),
                   );
                 }
               }
             },
-            child: const Text('Save to Supabase'),
+            child: const Text('Register Patient'),
           ),
         ],
       ),
@@ -187,7 +241,7 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                 color: AppColors.surface,
                                 borderRadius: BorderRadius.circular(12),
                                 child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                   onTap: () {
                                     Navigator.push(
                                       context,
@@ -197,6 +251,11 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                           patientName: patient.fullName,
                                           dob: patient.dateOfBirth ?? 'Not recorded',
                                           phone: patient.contactNumber ?? 'N/A',
+                                          sex: patient.sex,
+                                          allergies: patient.allergies,
+                                          address: patient.address,
+                                          emergencyContact: patient.emergencyContact,
+                                          onStartEncounter: widget.onStartEncounter,
                                         ),
                                       ),
                                     );
@@ -213,44 +272,85 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                       ),
                                     ),
                                   ),
-                                  title: Text(
-                                    patient.fullName,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.textPrimary,
-                                    ),
+                                  title: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          patient.fullName,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                      if (patient.sex != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primaryLight,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            patient.sex!,
+                                            style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      const SizedBox(height: 2),
+                                      const SizedBox(height: 3),
                                       Text(
                                         'DOB: ${patient.dateOfBirth ?? 'N/A'} · ${patient.contactNumber ?? 'N/A'}',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.textSecondary,
-                                        ),
+                                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          StatusBadge.open(),
-                                          const SizedBox(width: 6),
-                                          const Text(
-                                            'Active Record',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: AppColors.textSecondary,
+                                      if (patient.allergies != null && patient.allergies!.isNotEmpty && patient.allergies != 'None recorded') ...[
+                                        const SizedBox(height: 3),
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.danger),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                'Allergies: ${patient.allergies}',
+                                                style: const TextStyle(fontSize: 11, color: AppColors.danger, fontWeight: FontWeight.w600),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
+                                          ],
+                                        ),
+                                      ],
                                     ],
                                   ),
-                                  trailing: const Icon(
-                                    Icons.chevron_right,
-                                    color: AppColors.textMuted,
+                                  trailing: ElevatedButton.icon(
+                                    onPressed: () async {
+                                      final messenger = ScaffoldMessenger.of(context);
+                                      final inv = await ref
+                                          .read(openInvoicesProvider.notifier)
+                                          .createInvoiceForPatient(
+                                            patientId: patient.id,
+                                            patientName: patient.fullName,
+                                          );
+                                      if (mounted) {
+                                        messenger.showSnackBar(
+                                          SnackBar(
+                                            content: Text('Opened new Encounter Invoice #${inv.id} for ${patient.fullName}'),
+                                            backgroundColor: AppColors.primary,
+                                          ),
+                                        );
+                                        widget.onStartEncounter?.call(inv.id);
+                                      }
+                                    },
+                                    icon: const Icon(Icons.receipt_long, size: 14, color: Colors.white),
+                                    label: const Text('Bill', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.primary,
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
                                   ),
                                 ),
                               ),

@@ -63,40 +63,31 @@ class AuthRepository {
       }
     }
 
-    // Graceful fallback for demo accounts
+    // Graceful fallback for staff accounts
     if (cleanEmail.contains('nurse')) {
       _fallbackProfile = StaffProfile.mockNurse();
       return _fallbackProfile!;
-    } else if (cleanEmail.contains('doc') || cleanEmail.contains('doctor')) {
+    } else if (cleanEmail.contains('doc') || cleanEmail.contains('doctor') || cleanEmail.contains('dr.')) {
       _fallbackProfile = StaffProfile.mockDoctor();
       return _fallbackProfile!;
-    } else if (cleanEmail.contains('admin')) {
+    } else if (cleanEmail.contains('admin') || cleanEmail.contains('owner')) {
       _fallbackProfile = StaffProfile.mockAdmin();
       return _fallbackProfile!;
     }
 
+    final isDoctor = cleanEmail.contains('doc') || cleanEmail.contains('dr');
+    final isAdmin = cleanEmail.contains('admin') || cleanEmail.contains('owner');
     _fallbackProfile = StaffProfile(
       id: 'staff-user-${DateTime.now().millisecondsSinceEpoch}',
       email: cleanEmail,
-      fullName: cleanEmail.split('@').first,
-      role: UserRole.nurse,
+      fullName: isDoctor
+          ? 'Dr. ${cleanEmail.split('@').first.replaceAll('dr.', '').toUpperCase()}'
+          : cleanEmail.split('@').first,
+      role: isDoctor
+          ? UserRole.doctor
+          : (isAdmin ? UserRole.admin : UserRole.nurse),
       clinic: ClinicTenant.centralBranch(),
     );
-    return _fallbackProfile!;
-  }
-
-  Future<StaffProfile> signInAsDemo(UserRole role) async {
-    switch (role) {
-      case UserRole.doctor:
-        _fallbackProfile = StaffProfile.mockDoctor();
-        break;
-      case UserRole.admin:
-        _fallbackProfile = StaffProfile.mockAdmin();
-        break;
-      case UserRole.nurse:
-        _fallbackProfile = StaffProfile.mockNurse();
-        break;
-    }
     return _fallbackProfile!;
   }
 

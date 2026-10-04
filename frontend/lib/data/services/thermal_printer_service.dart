@@ -75,9 +75,22 @@ class ThermalPrinterService extends ChangeNotifier {
     }
 
     buffer.writeln(doubleDivider);
-    buffer.writeln(row('SUBTOTAL:', '₱${invoice.totalAmount.toStringAsFixed(2)}'));
-    buffer.writeln(row('VAT (12% Included):', '₱${(invoice.totalAmount * 0.12).toStringAsFixed(2)}'));
-    buffer.writeln(row('TOTAL DUE:', '₱${invoice.totalAmount.toStringAsFixed(2)}'));
+    buffer.writeln(row('GROSS TOTAL:', '₱${invoice.grossAmount.toStringAsFixed(2)}'));
+    if (invoice.hasSeniorOrPwdDiscount) {
+      final label = invoice.discountType == 'senior' ? 'SENIOR (RA 9994)' : 'PWD (RA 10754)';
+      if (invoice.discountIdNumber != null && invoice.discountIdNumber!.isNotEmpty) {
+        buffer.writeln(row('ID #:', invoice.discountIdNumber!));
+      }
+      buffer.writeln(row('VAT EXEMPT (12%):', '-₱${invoice.vatExemptionAmount.toStringAsFixed(2)}'));
+      buffer.writeln(row('$label 20%:', '-₱${invoice.discountAmount.toStringAsFixed(2)}'));
+    } else {
+      buffer.writeln(row('VAT (12% Included):', '₱${invoice.regularVatAmount.toStringAsFixed(2)}'));
+      if (invoice.discountAmount > 0) {
+        buffer.writeln(row('DISCOUNT:', '-₱${invoice.discountAmount.toStringAsFixed(2)}'));
+      }
+    }
+    buffer.writeln(doubleDivider);
+    buffer.writeln(row('TOTAL DUE:', '₱${invoice.netPayable.toStringAsFixed(2)}'));
     buffer.writeln(row('STATUS:', invoice.status.toUpperCase()));
     buffer.writeln(doubleDivider);
 

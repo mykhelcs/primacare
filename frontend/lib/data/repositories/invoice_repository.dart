@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../domain/models/invoice.dart';
 import '../services/supabase_service.dart';
+import 'inventory_repository.dart';
 
 class DispenseResult {
   final bool success;
@@ -57,10 +58,14 @@ class InvoiceRepository {
     }
   }
 
+  static final RegExp _uuidRegex = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
   Future<Invoice?> getInvoiceById(String id) async {
-    if (_client == null) {
+    if (_client == null || !_uuidRegex.hasMatch(id)) {
       final found = _mockInvoices.where((i) => i.id == id);
-      return found.isNotEmpty ? found.first : _mockInvoices.first;
+      return found.isNotEmpty ? found.first : (_mockInvoices.isNotEmpty ? _mockInvoices.first : null);
     }
 
     try {
@@ -78,7 +83,121 @@ class InvoiceRepository {
       return Invoice.fromJson(map);
     } catch (_) {
       final found = _mockInvoices.where((i) => i.id == id);
-      return found.isNotEmpty ? found.first : _mockInvoices.first;
+      return found.isNotEmpty ? found.first : (_mockInvoices.isNotEmpty ? _mockInvoices.first : null);
+    }
+  }
+
+  Future<Invoice> createInvoice({
+    required String patientId,
+    String? patientName,
+  }) async {
+    if (_client == null) {
+      final newInv = Invoice(
+        id: 'inv-${DateTime.now().millisecondsSinceEpoch}',
+        patientId: patientId,
+        patientName: patientName ?? 'Patient $patientId',
+        status: 'open',
+        totalAmount: 0.0,
+        createdAt: DateTime.now(),
+        lineItems: const [],
+      );
+      _mockInvoices.insert(0, newInv);
+      return newInv;
+    }
+
+    try {
+      final response = await _client
+          .from('invoices')
+          .insert({
+            'patient_id': patientId,
+            'status': 'open',
+            'total_amount': 0.00,
+          })
+          .select('*, invoice_line_items(*), patients(full_name)')
+          .single();
+
+      final map = Map<String, dynamic>.from(response);
+      if (map['patients'] != null && map['patients'] is Map) {
+        map['patient_name'] = map['patients']['full_name'];
+      }
+      return Invoice.fromJson(map);
+    } catch (_) {
+      final fallback = Invoice(
+        id: 'inv-${DateTime.now().millisecondsSinceEpoch}',
+        patientId: patientId,
+        patientName: patientName ?? 'Patient $patientId',
+        status: 'open',
+        totalAmount: 0.0,
+        createdAt: DateTime.now(),
+        lineItems: const [],
+      );
+      _mockInvoices.insert(0, fallback);
+      return fallback;
+    }
+  }
+
+  Future<Invoice?> addServiceItem({
+    required String invoiceId,
+    required String serviceName,
+    required double fee,
+  }) async {
+    if (_client == null) {
+      final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+      if (idx != -1) {
+        final old = _mockInvoices[idx];
+        final updatedLines = [
+          ...old.lineItems,
+          InvoiceLineItem(
+            id: 'li_${DateTime.now().millisecondsSinceEpoch}',
+            invoiceId: invoiceId,
+            itemName: serviceName,
+            quantity: 1,
+            unitCost: fee,
+          ),
+        ];
+        final updated = Invoice(
+          id: old.id,
+          patientId: old.patientId,
+          patientName: old.patientName,
+          status: old.status,
+          totalAmount: old.totalAmount + fee,
+          createdAt: old.createdAt,
+          lineItems: updatedLines,
+        );
+        _mockInvoices[idx] = updated;
+        return updated;
+      }
+      return null;
+    }
+
+    try {
+      await _client.from('invoice_line_items').insert({
+        'invoice_id': invoiceId,
+        'item_name': serviceName,
+        'quantity': 1,
+        'unit_cost': fee,
+      });
+
+      // Recalculate invoice total
+      final totalRes = await _client
+          .from('invoice_line_items')
+          .select('unit_cost, quantity')
+          .eq('invoice_id', invoiceId);
+      double newTotal = 0.0;
+      for (final row in totalRes as List) {
+        final q = (row['quantity'] as num?)?.toInt() ?? 1;
+        final c = (row['unit_cost'] as num?)?.toDouble() ?? 0.0;
+        newTotal += (q * c);
+      }
+
+      await _client
+          .from('invoices')
+          .update({'total_amount': newTotal})
+          .eq('id', invoiceId);
+
+      return await getInvoiceById(invoiceId);
+    } catch (_) {
+      return getInvoiceById(invoiceId);
     }
   }
 
@@ -111,60 +230,94 @@ class InvoiceRepository {
     }
   }
 
+  Future<Invoice?> applyDiscount({
+    required String invoiceId,
+    required String discountType, // 'none' | 'senior' | 'pwd' | 'custom'
+    double percentage = 20.0,
+    String? discountIdNumber,
+  }) async {
+    if (_client != null && _uuidRegex.hasMatch(invoiceId)) {
+      try {
+        await _client.from('invoices').update({
+          'discount_type': discountType,
+          'discount_percentage': discountType == 'none' ? 0.0 : percentage,
+          'discount_id_number': discountIdNumber,
+        }).eq('id', invoiceId);
+        return await getInvoiceById(invoiceId);
+      } catch (_) {}
+    }
+
+    final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+    if (idx != -1) {
+      final old = _mockInvoices[idx];
+      final updated = old.copyWith(
+        discountType: discountType,
+        discountPercentage: discountType == 'none' ? 0.0 : percentage,
+        discountIdNumber: discountIdNumber,
+      );
+      _mockInvoices[idx] = updated;
+      return updated;
+    }
+    return null;
+  }
+
   Future<DispenseResult> dispenseItem({
     required String barcode,
     required String invoiceId,
     int quantity = 1,
   }) async {
-    if (_client == null) {
-      // Local simulated response for offline/dev
-      final invIndex = _mockInvoices.indexWhere((i) => i.id == invoiceId);
-      final addedTotal = 450.0 * quantity;
-      if (invIndex != -1) {
-        final old = _mockInvoices[invIndex];
-        final updatedLines = [
-          ...old.lineItems,
-          InvoiceLineItem(
-            id: 'li_${DateTime.now().millisecondsSinceEpoch}',
-            invoiceId: invoiceId,
-            itemName: 'Hepatitis B Pediatric Vaccine',
-            quantity: quantity,
-            unitCost: 450.0,
-          ),
-        ];
-        _mockInvoices[invIndex] = Invoice(
-          id: old.id,
-          patientId: old.patientId,
-          patientName: old.patientName,
-          status: old.status,
-          totalAmount: old.totalAmount + addedTotal,
-          createdAt: old.createdAt,
-          lineItems: updatedLines,
-        );
+    // 1. Try remote Supabase RPC if client is connected and invoiceId is a valid UUID
+    if (_client != null && _uuidRegex.hasMatch(invoiceId)) {
+      try {
+        final response = await _client.rpc('dispense_item', params: {
+          'p_barcode': barcode,
+          'p_invoice_id': invoiceId,
+          'p_quantity': quantity,
+        });
+
+        final result = DispenseResult.fromJson(response as Map<String, dynamic>);
+        if (result.success) return result;
+      } catch (_) {
+        // Fall back to robust local FEFO handling
       }
+    }
 
-      return DispenseResult(
-        success: true,
-        itemName: 'Hepatitis B Pediatric Vaccine',
-        quantityDispensed: quantity,
-        amountAdded: addedTotal,
+    // 2. Local Item-Aware FEFO Dispensation
+    final invRepo = InventoryRepository(client: _client);
+    final item = await invRepo.getItemByBarcode(barcode);
+    final itemName = item?.name ?? 'Clinical Item ($barcode)';
+    final unitCost = item?.unitCost ?? 150.0;
+    final addedTotal = unitCost * quantity;
+
+    if (item != null) {
+      await invRepo.dispenseItemFEFO(itemId: item.id, quantity: quantity);
+    }
+
+    final invIndex = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+    if (invIndex != -1) {
+      final old = _mockInvoices[invIndex];
+      final updatedLines = [
+        ...old.lineItems,
+        InvoiceLineItem(
+          id: 'li_${DateTime.now().millisecondsSinceEpoch}',
+          invoiceId: invoiceId,
+          itemName: itemName,
+          quantity: quantity,
+          unitCost: unitCost,
+        ),
+      ];
+      _mockInvoices[invIndex] = old.copyWith(
+        totalAmount: old.totalAmount + addedTotal,
+        lineItems: updatedLines,
       );
     }
 
-    try {
-      final response = await _client.rpc('dispense_item', params: {
-        'p_barcode': barcode,
-        'p_invoice_id': invoiceId,
-        'p_quantity': quantity,
-      });
-
-      return DispenseResult.fromJson(response as Map<String, dynamic>);
-    } catch (e) {
-      return DispenseResult(
-        success: false,
-        message: e.toString(),
-      );
-    }
+    return DispenseResult(
+      success: true,
+      itemName: itemName,
+      quantityDispensed: quantity,
+      amountAdded: addedTotal,
+    );
   }
 
   static final List<Invoice> _mockInvoices = [

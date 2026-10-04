@@ -46,5 +46,35 @@ void main() {
       expect(result.success, false);
       expect(result.message, 'Insufficient stock for this item');
     });
+
+    test('InvoiceRepository creates new consultation invoice for patient', () async {
+      final repo = InvoiceRepository(client: null);
+      final inv = await repo.createInvoice(
+        patientId: 'p2',
+        patientName: 'Maria Santos',
+      );
+      expect(inv.patientId, 'p2');
+      expect(inv.patientName, 'Maria Santos');
+      expect(inv.status, 'open');
+      expect(inv.totalAmount, 0.0);
+    });
+
+    test('InvoiceRepository adds clinical service fee item to invoice', () async {
+      final repo = InvoiceRepository(client: null);
+      final inv = await repo.createInvoice(
+        patientId: 'p3',
+        patientName: 'Roberto Lim',
+      );
+
+      final updated = await repo.addServiceItem(
+        invoiceId: inv.id,
+        serviceName: 'General Consultation Fee',
+        fee: 500.0,
+      );
+
+      expect(updated != null, true);
+      expect(updated!.totalAmount, 500.0);
+      expect(updated.lineItems.any((l) => l.itemName == 'General Consultation Fee'), true);
+    });
   });
 }

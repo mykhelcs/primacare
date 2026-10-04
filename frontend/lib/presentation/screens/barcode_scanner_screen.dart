@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/models/inventory_item.dart';
+import '../../domain/models/invoice.dart';
 import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../../data/services/offline_sync_service.dart';
@@ -24,6 +25,7 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   final MobileScannerController _scannerController = MobileScannerController();
+  final TextEditingController _barcodeInputController = TextEditingController();
   String _currentBarcode = '4800016552011';
   InventoryItem? _scannedItem;
   int _quantity = 1;
@@ -33,17 +35,22 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   @override
   void initState() {
     super.initState();
+    _barcodeInputController.text = _currentBarcode;
     _lookupBarcode(_currentBarcode);
   }
 
   @override
   void dispose() {
     _scannerController.dispose();
+    _barcodeInputController.dispose();
     super.dispose();
   }
 
   Future<void> _lookupBarcode(String barcode) async {
     setState(() => _currentBarcode = barcode);
+    if (_barcodeInputController.text != barcode) {
+      _barcodeInputController.text = barcode;
+    }
     final repo = ref.read(inventoryRepositoryProvider);
     final item = await repo.getItemByBarcode(barcode);
     if (mounted) {
@@ -135,8 +142,17 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   @override
   Widget build(BuildContext context) {
     final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
-    final activeInvoiceId = widget.invoiceId ??
-        (openInvoices.isNotEmpty ? openInvoices.first.id : 'inv-1');
+    Invoice? activeInvoice;
+    if (widget.invoiceId != null) {
+      for (final inv in openInvoices) {
+        if (inv.id == widget.invoiceId) {
+          activeInvoice = inv;
+          break;
+        }
+      }
+    }
+    activeInvoice ??= openInvoices.isNotEmpty ? openInvoices.first : null;
+    final activeInvoiceId = activeInvoice?.id;
 
     final itemName = _scannedItem?.name ?? 'Loading item...';
     final unitCost = _scannedItem?.unitCost ?? 0.0;
@@ -230,6 +246,57 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                       ),
                     ),
                   ),
+                ),
+              ],
+            ),
+          ),
+
+          // USB Barcode Scanner Gun & Manual Input Bar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.black87,
+            child: Row(
+              children: [
+                const Icon(Icons.qr_code_scanner, color: AppColors.accent, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _barcodeInputController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
+                    decoration: const InputDecoration(
+                      hintText: 'USB Scanner Gun or Enter Barcode...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white24),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white24),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: AppColors.accent),
+                      ),
+                    ),
+                    onSubmitted: (val) {
+                      if (val.trim().isNotEmpty) {
+                        _lookupBarcode(val.trim());
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                  onPressed: () {
+                    final val = _barcodeInputController.text.trim();
+                    if (val.isNotEmpty) _lookupBarcode(val);
+                  },
+                  child: const Text('Lookup', style: TextStyle(fontSize: 12, color: Colors.white)),
                 ),
               ],
             ),
@@ -364,7 +431,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    onPressed: _isProcessing ? null : () => _confirmDispense(activeInvoiceId),
+                    onPressed: (_isProcessing || activeInvoiceId == null)
+                        ? null
+                        : () => _confirmDispense(activeInvoiceId),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.accent,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -377,7 +446,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : Text(
-                            'Confirm Dispensation & Append to Bill',
+                            activeInvoiceId == null
+                                ? 'No Active Encounter (Start an Encounter First)'
+                                : 'Confirm Dispensation & Append to Bill',
                             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                           ),
                   ),

@@ -89,18 +89,6 @@ class AuthNotifier extends Notifier<AuthStateData> {
     }
   }
 
-  Future<bool> signInAsDemo(UserRole role) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-    try {
-      final profile = await _repository.signInAsDemo(role);
-      state = AuthStateData(profile: profile, isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, errorMessage: e.toString());
-      return false;
-    }
-  }
-
   Future<void> signOut() async {
     state = state.copyWith(isLoading: true);
     await _repository.signOut();

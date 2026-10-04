@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
-import '../../domain/models/user_role.dart';
+import '../../core/utils/supabase_seeder.dart';
 import '../providers/auth_provider.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -39,25 +39,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  void _quickSelectRole(UserRole role) async {
-    switch (role) {
-      case UserRole.nurse:
-        _emailController.text = 'nurse@primacare.ph';
-        _passwordController.text = 'ClinicPass123!';
-        break;
-      case UserRole.doctor:
-        _emailController.text = 'doctor@primacare.ph';
-        _passwordController.text = 'DoctorPass123!';
-        break;
-      case UserRole.admin:
-        _emailController.text = 'admin@primacare.ph';
-        _passwordController.text = 'AdminPass123!';
-        break;
-    }
-
-    final success = await ref.read(authControllerProvider.notifier).signInAsDemo(role);
-    if (success && mounted) {
-      widget.onLoginSuccess?.call();
+  Future<void> _initializeClinicNecessities() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Initializing clinical formulary and essentials...')),
+    );
+    await SupabaseSeeder.seedInitialClinicalData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Clinic essentials & formulary ready!'),
+          backgroundColor: AppColors.success,
+        ),
+      );
     }
   }
 
@@ -76,39 +69,34 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // App Emblem
+                  // Official Brand Logo Badge
                   Container(
-                    width: 64,
-                    height: 64,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     decoration: BoxDecoration(
-                      color: AppColors.accent,
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.accent.withValues(alpha: 0.3),
-                          blurRadius: 16,
+                          color: Colors.black.withValues(alpha: 0.15),
+                          blurRadius: 20,
                           offset: const Offset(0, 6),
                         ),
                       ],
                     ),
-                    alignment: Alignment.center,
-                    child: const Text('🏥', style: TextStyle(fontSize: 32)),
+                    child: Image.asset(
+                      'assets/images/primacare_logo.png',
+                      height: 48,
+                      fit: BoxFit.contain,
+                      semanticLabel: 'PrimaCare',
+                    ),
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'PrimaCare',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Smart Clinic Operations System',
+                    'Smart Clinic Operations Platform',
                     style: TextStyle(
                       color: Colors.white70,
                       fontSize: 13,
+                      letterSpacing: 0.2,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -268,51 +256,52 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           const SizedBox(height: 20),
 
-                          // Quick Demo Login Pills
-                          const Text(
-                            'Demo Quick Fill:',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary,
+                          // Security Notice & First-Run Setup
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppColors.background,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.border),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: authState.isLoading ? null : () => _quickSelectRole(UserRole.nurse),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.shield_outlined, size: 16, color: AppColors.primary),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Clinic Security & Access',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Authorized clinical staff credentials only. Permissions are enforced based on assigned role (Doctor, Nurse, Admin).',
+                                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                                ),
+                                const SizedBox(height: 10),
+                                OutlinedButton.icon(
+                                  onPressed: authState.isLoading ? null : _initializeClinicNecessities,
+                                  icon: const Icon(Icons.cloud_sync, size: 16),
+                                  label: const Text(
+                                    'Initialize Clinic Essentials & Catalog',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                                  ),
                                   style: OutlinedButton.styleFrom(
                                     padding: const EdgeInsets.symmetric(vertical: 8),
-                                    side: const BorderSide(color: AppColors.border),
+                                    side: const BorderSide(color: AppColors.primary),
+                                    foregroundColor: AppColors.primary,
                                   ),
-                                  child: const Text('👩‍⚕️ Nurse', style: TextStyle(fontSize: 11)),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: authState.isLoading ? null : () => _quickSelectRole(UserRole.doctor),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
-                                    side: const BorderSide(color: AppColors.border),
-                                  ),
-                                  child: const Text('🩺 Doctor', style: TextStyle(fontSize: 11)),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: authState.isLoading ? null : () => _quickSelectRole(UserRole.admin),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
-                                    side: const BorderSide(color: AppColors.border),
-                                  ),
-                                  child: const Text('💼 Admin', style: TextStyle(fontSize: 11)),
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
                       ),

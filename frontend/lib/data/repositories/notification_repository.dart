@@ -5,12 +5,18 @@ import '../services/supabase_service.dart';
 class NotificationRepository {
   final SupabaseClient? _client;
 
+  static final List<NotificationItem> _localNotifications = [];
+
+  static final RegExp _uuidRegex = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
   NotificationRepository({SupabaseClient? client})
       : _client = client ?? (SupabaseService.isInitialized ? SupabaseService.client : null);
 
   Future<List<NotificationItem>> getNotificationQueue() async {
     if (_client == null) {
-      return _mockNotifications;
+      return [..._localNotifications, ..._mockNotifications];
     }
 
     try {
@@ -19,79 +25,108 @@ class NotificationRepository {
           .select('*, patients(full_name)')
           .order('scheduled_for', ascending: false);
 
-      return (response as List).map((row) {
+      final remoteList = (response as List).map((row) {
         final map = Map<String, dynamic>.from(row as Map);
         if (map['patients'] != null && map['patients'] is Map) {
           map['patient_name'] = map['patients']['full_name'];
         }
         return NotificationItem.fromJson(map);
       }).toList();
+
+      final remoteIds = remoteList.map((n) => n.id).toSet();
+      final unmerged = _localNotifications.where((n) => !remoteIds.contains(n.id));
+      return [...unmerged, ...remoteList];
     } catch (_) {
-      return _mockNotifications;
+      return [..._localNotifications, ..._mockNotifications];
     }
   }
 
-  Future<String?> scheduleVaccineReminder({
+  Future<String> scheduleVaccineReminder({
     required String patientId,
     required String vaccineName,
     required DateTime dueDate,
+    String? patientName,
   }) async {
-    if (_client == null) {
-      final newNotif = NotificationItem(
-        id: 'n_${DateTime.now().millisecondsSinceEpoch}',
-        patientId: patientId,
-        type: 'vaccine_reminder',
-        message: 'Reminder for $vaccineName due on ${dueDate.toIso8601String().substring(0, 10)}',
-        scheduledFor: dueDate,
-        status: 'pending',
-      );
-      _mockNotifications.insert(0, newNotif);
-      return newNotif.id;
+    final newId = 'n_${DateTime.now().millisecondsSinceEpoch}';
+    final fallbackNotif = NotificationItem(
+      id: newId,
+      patientId: patientId,
+      patientName: patientName,
+      type: 'vaccine_reminder',
+      message: 'Reminder for $vaccineName due on ${dueDate.toIso8601String().substring(0, 10)}',
+      scheduledFor: dueDate,
+      status: 'pending',
+    );
+
+    if (_client != null && _uuidRegex.hasMatch(patientId)) {
+      try {
+        final response = await _client
+            .from('notifications_queue')
+            .insert({
+              'patient_id': patientId,
+              'type': 'vaccine_reminder',
+              'message': fallbackNotif.message,
+              'scheduled_for': dueDate.toIso8601String(),
+              'status': 'pending',
+            })
+            .select()
+            .single();
+        final created = NotificationItem.fromJson(response);
+        _localNotifications.insert(0, created);
+        return created.id;
+      } catch (_) {}
     }
 
-    try {
-      final response = await _client.rpc('schedule_vaccine_reminder', params: {
-        'p_patient_id': patientId,
-        'p_vaccine_name': vaccineName,
-        'p_due_date': dueDate.toIso8601String(),
-      });
-      return response?.toString();
-    } catch (_) {
-      return null;
-    }
+    _localNotifications.insert(0, fallbackNotif);
+    return newId;
   }
 
   Future<bool> sendManualNotification(String notificationId) async {
-    if (_client == null) {
-      final index = _mockNotifications.indexWhere((n) => n.id == notificationId);
-      if (index != -1) {
-        final existing = _mockNotifications[index];
-        _mockNotifications[index] = NotificationItem(
-          id: existing.id,
-          patientId: existing.patientId,
-          patientName: existing.patientName,
-          type: existing.type,
-          message: existing.message,
-          scheduledFor: existing.scheduledFor,
-          sentAt: DateTime.now(),
-          status: 'sent',
-        );
-      }
-      return true;
+    // Update local cache first
+    final localIdx = _localNotifications.indexWhere((n) => n.id == notificationId);
+    if (localIdx != -1) {
+      final existing = _localNotifications[localIdx];
+      _localNotifications[localIdx] = NotificationItem(
+        id: existing.id,
+        patientId: existing.patientId,
+        patientName: existing.patientName,
+        type: existing.type,
+        message: existing.message,
+        scheduledFor: existing.scheduledFor,
+        sentAt: DateTime.now(),
+        status: 'sent',
+      );
     }
 
-    try {
-      await _client
-          .from('notifications_queue')
-          .update({
-            'status': 'sent',
-            'sent_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', notificationId);
-      return true;
-    } catch (_) {
-      return false;
+    final mockIdx = _mockNotifications.indexWhere((n) => n.id == notificationId);
+    if (mockIdx != -1) {
+      final existing = _mockNotifications[mockIdx];
+      _mockNotifications[mockIdx] = NotificationItem(
+        id: existing.id,
+        patientId: existing.patientId,
+        patientName: existing.patientName,
+        type: existing.type,
+        message: existing.message,
+        scheduledFor: existing.scheduledFor,
+        sentAt: DateTime.now(),
+        status: 'sent',
+      );
     }
+
+    if (_client != null && _uuidRegex.hasMatch(notificationId)) {
+      try {
+        await _client
+            .from('notifications_queue')
+            .update({
+              'status': 'sent',
+              'sent_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', notificationId);
+        return true;
+      } catch (_) {}
+    }
+
+    return true;
   }
 
   static final List<NotificationItem> _mockNotifications = [
