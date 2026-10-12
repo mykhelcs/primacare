@@ -266,11 +266,26 @@ class InvoiceRepository {
     required String invoiceId,
     int quantity = 1,
   }) async {
+    // 0. Boundary & Pentest Defense: Guard against non-positive quantity and blank barcode
+    if (quantity < 1) {
+      return const DispenseResult(
+        success: false,
+        message: 'Dispense quantity must be at least 1.',
+      );
+    }
+    final sanitizedBarcode = barcode.trim();
+    if (sanitizedBarcode.isEmpty) {
+      return const DispenseResult(
+        success: false,
+        message: 'Barcode cannot be empty.',
+      );
+    }
+
     // 1. Try remote Supabase RPC if client is connected and invoiceId is a valid UUID
     if (_client != null && _uuidRegex.hasMatch(invoiceId)) {
       try {
         final response = await _client.rpc('dispense_item', params: {
-          'p_barcode': barcode,
+          'p_barcode': sanitizedBarcode,
           'p_invoice_id': invoiceId,
           'p_quantity': quantity,
         });

@@ -18,4 +18,11 @@ enum UserRole {
   bool get canManageInventory => this == UserRole.admin || this == UserRole.nurse;
   bool get canViewFinancialReports => this == UserRole.admin;
   bool get canDispense => this == UserRole.nurse || this == UserRole.admin;
+  bool get canReceiveStock => this == UserRole.admin || this == UserRole.nurse;
+
+  bool isTabAccessible(int tabIndex) {
+    if (tabIndex == 10) return canViewFinancialReports;
+    if (tabIndex == 7) return canReceiveStock;
+    return true;
+  }
 }

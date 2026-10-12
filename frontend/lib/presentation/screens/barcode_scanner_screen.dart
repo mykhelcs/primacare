@@ -47,19 +47,22 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   }
 
   Future<void> _lookupBarcode(String barcode) async {
-    setState(() => _currentBarcode = barcode);
-    if (_barcodeInputController.text != barcode) {
-      _barcodeInputController.text = barcode;
+    final cleanBarcode = barcode.trim();
+    if (cleanBarcode.isEmpty) return;
+
+    setState(() => _currentBarcode = cleanBarcode);
+    if (_barcodeInputController.text != cleanBarcode) {
+      _barcodeInputController.text = cleanBarcode;
     }
     final repo = ref.read(inventoryRepositoryProvider);
-    final item = await repo.getItemByBarcode(barcode);
+    final item = await repo.getItemByBarcode(cleanBarcode);
     if (mounted) {
       setState(() {
         _scannedItem = item ??
             InventoryItem(
               id: 'unknown',
-              name: 'Item ($barcode)',
-              barcode: barcode,
+              name: 'Item ($cleanBarcode)',
+              barcode: cleanBarcode,
               unitCost: 150.00,
             );
         _quantity = 1;
@@ -70,12 +73,22 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   void _onDetect(BarcodeCapture capture) {
     if (_isProcessing) return;
     final barcode = capture.barcodes.firstOrNull?.rawValue;
-    if (barcode != null && barcode != _currentBarcode) {
+    if (barcode != null && barcode.trim().isNotEmpty && barcode.trim() != _currentBarcode) {
       _lookupBarcode(barcode);
     }
   }
 
   Future<void> _confirmDispense(String targetInvoiceId) async {
+    if (_quantity < 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Dispense quantity must be at least 1.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isProcessing = true);
 
     final isOnline = OfflineSyncService().isOnline;

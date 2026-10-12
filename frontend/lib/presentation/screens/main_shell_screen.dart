@@ -6,6 +6,7 @@ import '../providers/auth_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../../data/services/offline_sync_service.dart';
 import '../../domain/models/staff_profile.dart';
+import '../../domain/models/user_role.dart';
 import '../widgets/biometric_unlock_dialog.dart';
 import 'dashboard_screen.dart';
 import 'patient_list_screen.dart';
@@ -103,6 +104,19 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     '📈',
   ];
 
+  void _navigateToTab(int idx, UserRole role) {
+    if (!role.isTabAccessible(idx)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Access Denied: The "${_navLabels[idx]}" screen requires elevated permissions.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+    setState(() => _selectedIndex = idx);
+  }
+
   void _openInvoice(String invoiceId) {
     setState(() {
       _selectedInvoiceId = invoiceId;
@@ -145,7 +159,13 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
   @override
   Widget build(BuildContext context) {
     final staff = ref.watch(currentStaffProfileProvider);
+    final userRole = staff?.role ?? UserRole.nurse;
     final isDesktop = MediaQuery.of(context).size.width >= 900;
+
+    // Defense-in-depth: If current role cannot access currently selected tab, revert to Dashboard
+    if (!userRole.isTabAccessible(_selectedIndex)) {
+      _selectedIndex = 0;
+    }
 
     final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
     final activeInvoiceId = _selectedInvoiceId ??
@@ -155,7 +175,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
       DashboardScreen(
         onScanTapped: () => _openScanner(forInvoiceId: activeInvoiceId),
         onInvoiceTapped: (id) => _openInvoice(id),
-        onNavigateTab: (tabIdx) => setState(() => _selectedIndex = tabIdx),
+        onNavigateTab: (tabIdx) => _navigateToTab(tabIdx, userRole),
         onNewEncounterStarted: (invId) => _openInvoice(invId),
       ),
       PatientListScreen(
@@ -348,13 +368,14 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                 ),
                 const Divider(),
                 ...List.generate(_navLabels.length, (idx) {
+                  if (!userRole.isTabAccessible(idx)) return const SizedBox.shrink();
                   return ListTile(
                     leading: Text(_navIcons[idx], style: const TextStyle(fontSize: 18)),
                     title: Text(_navLabels[idx], style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                     selected: _selectedIndex == idx,
                     selectedTileColor: AppColors.primaryLight,
                     onTap: () {
-                      setState(() => _selectedIndex = idx);
+                      _navigateToTab(idx, userRole);
                       Navigator.pop(context);
                     },
                   );
@@ -433,6 +454,9 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         itemCount: _navLabels.length,
                         itemBuilder: (context, idx) {
+                          if (!userRole.isTabAccessible(idx)) {
+                            return const SizedBox.shrink();
+                          }
                           final isActive = _selectedIndex == idx;
                           return Container(
                             decoration: BoxDecoration(
@@ -456,7 +480,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                                   color: isActive ? AppColors.primary : AppColors.textSecondary,
                                 ),
                               ),
-                              onTap: () => setState(() => _selectedIndex = idx),
+                              onTap: () => _navigateToTab(idx, userRole),
                             ),
                           );
                         },

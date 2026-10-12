@@ -46,6 +46,8 @@ class ClinicalVitals {
     }
     return false;
   }
+  bool get isTachycardic => heartRate > 100;
+  bool get hasAlert => isFever || isHypertensive || isTachycardic;
 
   factory ClinicalVitals.fromJson(Map<String, dynamic> json) {
     return ClinicalVitals(
