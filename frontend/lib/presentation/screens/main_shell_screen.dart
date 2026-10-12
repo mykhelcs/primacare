@@ -263,16 +263,12 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                      Center(
                         child: Image.asset(
                           'assets/images/primacare_logo.png',
-                          height: 24,
+                          height: 36,
                           fit: BoxFit.contain,
+                          semanticLabel: 'PrimaCare',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -452,15 +448,10 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                          Center(
                             child: Image.asset(
                               'assets/images/primacare_logo.png',
-                              height: 32,
+                              height: 38,
                               fit: BoxFit.contain,
                               semanticLabel: 'PrimaCare',
                             ),
