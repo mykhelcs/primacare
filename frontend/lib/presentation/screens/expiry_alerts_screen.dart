@@ -11,6 +11,10 @@ class ExpiryAlertsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final batchesAsync = ref.watch(expiringBatchesProvider);
     final allBatches = batchesAsync.value ?? [];
+    final inventory = ref.watch(inventoryListProvider).value ?? [];
+    final Map<String, String> itemNameMap = {
+      for (final item in inventory) item.id: item.name,
+    };
 
     final criticalBatches = allBatches.where((b) => b.isCriticalExpiry).toList();
     final upcomingBatches = allBatches
@@ -28,7 +32,10 @@ class ExpiryAlertsScreen extends ConsumerWidget {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: () async => ref.invalidate(expiringBatchesProvider),
+        onRefresh: () async {
+          ref.invalidate(expiringBatchesProvider);
+          await ref.read(inventoryListProvider.notifier).refresh();
+        },
         color: AppColors.primary,
         child: batchesAsync.isLoading && allBatches.isEmpty
             ? const Center(child: CircularProgressIndicator())
@@ -61,13 +68,17 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                     )
                   else
                     ...criticalBatches.map(
-                      (b) => _buildAlertCard(
-                        itemName: 'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})',
-                        batch: 'Batch #${b.batchNumber}',
-                        qty: '${b.quantityRemaining} units remaining',
-                        expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
-                        isCritical: true,
-                      ),
+                      (b) {
+                        final name = itemNameMap[b.itemId] ??
+                            'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})';
+                        return _buildAlertCard(
+                          itemName: name,
+                          batch: 'Batch #${b.batchNumber}',
+                          qty: '${b.quantityRemaining} units remaining',
+                          expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
+                          isCritical: true,
+                        );
+                      },
                     ),
                   const SizedBox(height: 20),
                   const Text(
@@ -94,13 +105,17 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                     )
                   else
                     ...upcomingBatches.map(
-                      (b) => _buildAlertCard(
-                        itemName: 'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})',
-                        batch: 'Batch #${b.batchNumber}',
-                        qty: '${b.quantityRemaining} units remaining',
-                        expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
-                        isCritical: false,
-                      ),
+                      (b) {
+                        final name = itemNameMap[b.itemId] ??
+                            'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})';
+                        return _buildAlertCard(
+                          itemName: name,
+                          batch: 'Batch #${b.batchNumber}',
+                          qty: '${b.quantityRemaining} units remaining',
+                          expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
+                          isCritical: false,
+                        );
+                      },
                     ),
                 ],
               ),
@@ -133,9 +148,10 @@ class ExpiryAlertsScreen extends ConsumerWidget {
               color: isCritical ? AppColors.dangerLight : AppColors.warningLight,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Text(
-              isCritical ? '⚠️' : '⏱️',
-              style: const TextStyle(fontSize: 20),
+            child: Icon(
+              isCritical ? Icons.warning_amber_rounded : Icons.timer_outlined,
+              size: 22,
+              color: isCritical ? AppColors.danger : AppColors.warning,
             ),
           ),
           const SizedBox(width: 12),

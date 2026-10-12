@@ -107,17 +107,9 @@ class ReportsScreen extends ConsumerWidget {
     final totalPatients = patients.length;
     final collectionRate = totalBilled > 0 ? ((totalCollected / totalBilled) * 100) : 0.0;
 
-    // Default baseline if newly opened clinic has no dispensations yet
-    if (leakagePrevented == 0 && inventory.isNotEmpty) {
-      categoryRecovery['Vaccines'] = 9450.0;
-      categoryRecovery['Consumables'] = 5200.0;
-      categoryRecovery['Pharmaceuticals'] = 3800.0;
-      leakagePrevented = 18450.0;
-    }
-
-    // Chart Dynamic Bar Groups
-    final billedInK = totalBilled > 0 ? (totalBilled / 1000) : 148.0;
-    final collectedInK = totalCollected > 0 ? (totalCollected / 1000) : 130.0;
+    // Chart Dynamic Bar Groups — honest zero when no data exists
+    final billedInK = totalBilled / 1000;
+    final collectedInK = totalCollected / 1000;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -163,25 +155,25 @@ class ReportsScreen extends ConsumerWidget {
               childAspectRatio: 1.5,
               children: [
                 StatCard(
-                  icon: '📈',
+                  icon: Icons.trending_up,
                   value: '₱${totalBilled.toStringAsFixed(2)}',
                   label: 'Total Billed ($paidCount settled, $openCount open)',
                   valueColor: AppColors.primary,
                 ),
                 StatCard(
-                  icon: '🛡️',
+                  icon: Icons.verified_user,
                   value: '₱${leakagePrevented.toStringAsFixed(2)}',
                   label: 'Leakage Captured (Scanner)',
                   valueColor: AppColors.accent,
                 ),
                 StatCard(
-                  icon: '📦',
+                  icon: Icons.inventory_2,
                   value: '₱${totalInventoryValuation.toStringAsFixed(2)}',
                   label: 'Valuation ($lowStockCount low stock)',
                   valueColor: AppColors.success,
                 ),
                 StatCard(
-                  icon: '👥',
+                  icon: Icons.people,
                   value: '$totalPatients Patients',
                   label: 'Collection Rate: ${collectionRate.toStringAsFixed(1)}%',
                   valueColor: AppColors.primaryDark,
@@ -255,11 +247,25 @@ class ReportsScreen extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(width: 12, height: 12, color: AppColors.primary),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
                 const SizedBox(width: 4),
                 const Text('Total Billed', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 const SizedBox(width: 16),
-                Container(width: 12, height: 12, color: AppColors.accent),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: AppColors.accent,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
                 const SizedBox(width: 4),
                 const Text('Collected (Settled)', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
               ],

@@ -90,18 +90,18 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     'Reports',
   ];
 
-  final List<String> _navIcons = [
-    '📊',
-    '👥',
-    '🧾',
-    '📷',
-    '📦',
-    '🏷️',
-    '⚠️',
-    '📥',
-    '🔔',
-    '💉',
-    '📈',
+  final List<IconData> _navIcons = [
+    Icons.dashboard_outlined,
+    Icons.people_outline,
+    Icons.receipt_long_outlined,
+    Icons.qr_code_scanner,
+    Icons.inventory_2_outlined,
+    Icons.qr_code_2,
+    Icons.warning_amber_rounded,
+    Icons.move_to_inbox_outlined,
+    Icons.notifications_none,
+    Icons.vaccines_outlined,
+    Icons.bar_chart,
   ];
 
   void _navigateToTab(int idx, UserRole role) {
@@ -207,40 +207,51 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
             index: _selectedIndex,
             children: screens,
           ),
-          bottomNavigationBar: BottomNavigationBar(
-            currentIndex: _selectedIndex <= 3 ? _selectedIndex : 0,
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: AppColors.primary,
-            unselectedItemColor: AppColors.textSecondary,
-            onTap: (idx) {
-              if (idx == 3) {
-                _openScanner(forInvoiceId: _selectedInvoiceId);
-              } else {
-                setState(() => _selectedIndex = idx);
-              }
+          bottomNavigationBar: Builder(
+            builder: (scaffoldContext) {
+              return BottomNavigationBar(
+                currentIndex: _selectedIndex <= 3 ? _selectedIndex : 0,
+                type: BottomNavigationBarType.fixed,
+                selectedItemColor: AppColors.primary,
+                unselectedItemColor: AppColors.textSecondary,
+                onTap: (idx) {
+                  if (idx == 3) {
+                    _openScanner(forInvoiceId: _selectedInvoiceId);
+                  } else if (idx == 4) {
+                    Scaffold.of(scaffoldContext).openDrawer();
+                  } else {
+                    setState(() => _selectedIndex = idx);
+                  }
+                },
+                items: const [
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.dashboard_outlined),
+                    activeIcon: Icon(Icons.dashboard),
+                    label: 'Dashboard',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.people_outline),
+                    activeIcon: Icon(Icons.people),
+                    label: 'Patients',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.receipt_long_outlined),
+                    activeIcon: Icon(Icons.receipt_long),
+                    label: 'Bill',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.qr_code_scanner),
+                    activeIcon: Icon(Icons.qr_code_scanner),
+                    label: 'Scan',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.menu),
+                    activeIcon: Icon(Icons.menu_open),
+                    label: 'More',
+                  ),
+                ],
+              );
             },
-            items: const [
-              BottomNavigationBarItem(
-                icon: Icon(Icons.dashboard_outlined),
-                activeIcon: Icon(Icons.dashboard),
-                label: 'Dashboard',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.people_outline),
-                activeIcon: Icon(Icons.people),
-                label: 'Patients',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.receipt_long_outlined),
-                activeIcon: Icon(Icons.receipt_long),
-                label: 'Bill',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.qr_code_scanner),
-                activeIcon: Icon(Icons.qr_code_scanner),
-                label: 'Scan',
-              ),
-            ],
           ),
           drawer: Drawer(
             child: ListView(
@@ -270,9 +281,14 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                           CircleAvatar(
                             backgroundColor: AppColors.accent,
                             radius: 18,
-                            child: Text(
-                              staff?.role.name == 'doctor' ? '🩺' : (staff?.role.name == 'admin' ? '💼' : '👩‍⚕️'),
-                              style: const TextStyle(fontSize: 16),
+                            child: Icon(
+                              staff?.role == UserRole.doctor
+                                  ? Icons.medical_services_outlined
+                                  : staff?.role == UserRole.admin
+                                      ? Icons.admin_panel_settings_outlined
+                                      : Icons.local_hospital_outlined,
+                              color: Colors.white,
+                              size: 18,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -324,7 +340,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                 ),
                 // Multi-Tenant Clinic Switcher
                 ListTile(
-                  leading: const Text('🏥', style: TextStyle(fontSize: 18)),
+                  leading: const Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 20),
                   title: const Text('Switch Branch', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   subtitle: Text(staff?.clinic.code ?? 'PC-CENTRAL', style: const TextStyle(fontSize: 11)),
                   trailing: const Icon(Icons.swap_horiz, size: 20),
@@ -369,10 +385,22 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                 const Divider(),
                 ...List.generate(_navLabels.length, (idx) {
                   if (!userRole.isTabAccessible(idx)) return const SizedBox.shrink();
+                  final isSelected = _selectedIndex == idx;
                   return ListTile(
-                    leading: Text(_navIcons[idx], style: const TextStyle(fontSize: 18)),
-                    title: Text(_navLabels[idx], style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    selected: _selectedIndex == idx,
+                    leading: Icon(
+                      _navIcons[idx],
+                      size: 20,
+                      color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                    ),
+                    title: Text(
+                      _navLabels[idx],
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                      ),
+                    ),
+                    selected: isSelected,
                     selectedTileColor: AppColors.primaryLight,
                     onTap: () {
                       _navigateToTab(idx, userRole);
@@ -471,7 +499,11 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                               dense: true,
                               selected: isActive,
                               selectedTileColor: AppColors.primaryLight,
-                              leading: Text(_navIcons[idx], style: const TextStyle(fontSize: 16)),
+                              leading: Icon(
+                                _navIcons[idx],
+                                size: 18,
+                                color: isActive ? AppColors.primary : AppColors.textSecondary,
+                              ),
                               title: Text(
                                 _navLabels[idx],
                                 style: TextStyle(

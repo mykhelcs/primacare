@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
 class StatCard extends StatelessWidget {
-  final String icon;
+  final IconData icon;
   final String value;
   final String label;
   final Color valueColor;
@@ -28,14 +28,25 @@ class StatCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(icon, style: const TextStyle(fontSize: 20)),
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: valueColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 18, color: valueColor),
+          ),
           const SizedBox(height: 6),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              color: valueColor,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: valueColor,
+              ),
             ),
           ),
           const SizedBox(height: 2),
@@ -46,6 +57,8 @@ class StatCard extends StatelessWidget {
               color: AppColors.textSecondary,
               fontWeight: FontWeight.w500,
             ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
           ),
         ],
       ),

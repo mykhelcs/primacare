@@ -165,7 +165,7 @@ class NotificationsScreen extends ConsumerWidget {
             ),
             child: Row(
               children: const [
-                Text('🤖', style: TextStyle(fontSize: 24)),
+                Icon(Icons.smart_toy, size: 28, color: AppColors.accent),
                 SizedBox(width: 12),
                 Expanded(
                   child: Text(

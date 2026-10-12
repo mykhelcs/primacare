@@ -56,7 +56,23 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                   Expanded(
                     child: TextField(
                       controller: dobCtrl,
-                      decoration: const InputDecoration(labelText: 'DOB (YYYY-MM-DD)', hintText: '1995-04-12'),
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Date of Birth',
+                        hintText: 'YYYY-MM-DD',
+                        prefixIcon: Icon(Icons.calendar_today_outlined, size: 16),
+                      ),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: ctx,
+                          initialDate: DateTime(1995, 1, 1),
+                          firstDate: DateTime(1900),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          dobCtrl.text = picked.toIso8601String().substring(0, 10);
+                        }
+                      },
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -210,13 +226,31 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                   : filtered.isEmpty
                       ? ListView(
                           physics: const AlwaysScrollableScrollPhysics(),
-                          children: const [
-                            SizedBox(height: 60),
+                          children: [
+                            const SizedBox(height: 60),
                             Center(
-                              child: Text(
-                                'No patients found.\nPull down to refresh or register a patient.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: AppColors.textSecondary),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.person_search, size: 56, color: AppColors.textMuted),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'No patients registered yet.',
+                                    style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Register your first patient to get started.',
+                                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  ElevatedButton.icon(
+                                    onPressed: _showAddPatientDialog,
+                                    icon: const Icon(Icons.person_add, size: 16, color: Colors.white),
+                                    label: const Text('Register First Patient', style: TextStyle(color: Colors.white)),
+                                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+                                  ),
+                                ],
                               ),
                             ),
                           ],

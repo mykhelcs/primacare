@@ -18,6 +18,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  int _devTapCount = 0;
 
   @override
   void dispose() {
@@ -267,39 +268,48 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Row(
-                                  children: const [
-                                    Icon(Icons.shield_outlined, size: 16, color: AppColors.primary),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Clinic Security & Access',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.textPrimary,
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _devTapCount++;
+                                    });
+                                  },
+                                  child: Row(
+                                    children: const [
+                                      Icon(Icons.shield_outlined, size: 16, color: AppColors.primary),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Clinic Security & Access',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: AppColors.textPrimary,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(height: 4),
                                 const Text(
                                   'Authorized clinical staff credentials only. Permissions are enforced based on assigned role (Doctor, Nurse, Admin).',
                                   style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                                 ),
-                                const SizedBox(height: 10),
-                                OutlinedButton.icon(
-                                  onPressed: authState.isLoading ? null : _initializeClinicNecessities,
-                                  icon: const Icon(Icons.cloud_sync, size: 16),
-                                  label: const Text(
-                                    'Initialize Clinic Essentials & Catalog',
-                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                                if (_devTapCount >= 5) ...[
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                    onPressed: authState.isLoading ? null : _initializeClinicNecessities,
+                                    icon: const Icon(Icons.cloud_sync, size: 16),
+                                    label: const Text(
+                                      'Initialize Clinic Essentials & Catalog',
+                                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      side: const BorderSide(color: AppColors.primary),
+                                      foregroundColor: AppColors.primary,
+                                    ),
                                   ),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
-                                    side: const BorderSide(color: AppColors.primary),
-                                    foregroundColor: AppColors.primary,
-                                  ),
-                                ),
+                                ],
                               ],
                             ),
                           ),

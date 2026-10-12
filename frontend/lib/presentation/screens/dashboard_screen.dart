@@ -211,25 +211,25 @@ class DashboardScreen extends ConsumerWidget {
                 childAspectRatio: 1.55,
                 children: [
                   StatCard(
-                    icon: '💰',
+                    icon: Icons.payments_outlined,
                     value: '₱${collectedToday.toStringAsFixed(0)}',
                     label: 'Collected Today',
                     valueColor: AppColors.success,
                   ),
                   StatCard(
-                    icon: '🧾',
+                    icon: Icons.receipt_long_outlined,
                     value: '₱${unpaidReceivables.toStringAsFixed(0)}',
                     label: 'Unpaid Receivables',
                     valueColor: AppColors.warning,
                   ),
                   StatCard(
-                    icon: '👥',
+                    icon: Icons.people_outline,
                     value: '${metrics.todayPatientsCount}',
                     label: 'Total Patients',
                     valueColor: AppColors.accent,
                   ),
                   StatCard(
-                    icon: '⚠️',
+                    icon: Icons.warning_amber_rounded,
                     value: '${metrics.expiryAlertsCount}',
                     label: 'Expiring Batches (<30d)',
                     valueColor: AppColors.danger,

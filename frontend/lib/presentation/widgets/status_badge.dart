@@ -45,6 +45,14 @@ class StatusBadge extends StatelessWidget {
     );
   }
 
+  factory StatusBadge.inStock() {
+    return const StatusBadge(
+      label: 'In Stock',
+      backgroundColor: AppColors.successLight,
+      textColor: AppColors.success,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(

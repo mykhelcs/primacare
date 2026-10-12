@@ -273,7 +273,7 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
                                       if (isLowStock)
                                         StatusBadge.warning(text: 'Low Stock')
                                       else
-                                        StatusBadge.open(),
+                                        StatusBadge.inStock(),
                                     ],
                                   ),
                                 ],
