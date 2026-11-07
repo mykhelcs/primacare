@@ -55,6 +55,7 @@ class ReportsScreen extends ConsumerWidget {
     final invoices = ref.watch(openInvoicesProvider).value ?? [];
     final inventory = ref.watch(inventoryListProvider).value ?? [];
     final patients = ref.watch(patientListProvider).value ?? [];
+    final expiringBatches = ref.watch(expiringBatchesProvider).value ?? [];
 
     // O(N) Single-Pass Invoice Aggregation
     double totalBilled = 0.0;
@@ -103,13 +104,23 @@ class ReportsScreen extends ConsumerWidget {
       if (item.isLowStock) lowStockCount++;
     }
 
+    // Phase 4 Waste & Expiry Risk Computation
+    double atRiskWasteValuation = 0.0;
+    int atRiskUnits = 0;
+    for (final b in expiringBatches) {
+      final unitCost = inventory.where((i) => i.id == b.itemId).firstOrNull?.unitCost ?? 0.0;
+      atRiskWasteValuation += (b.quantityRemaining * unitCost);
+      atRiskUnits += b.quantityRemaining;
+    }
+
     // O(P) Patient metrics
     final totalPatients = patients.length;
     final collectionRate = totalBilled > 0 ? ((totalCollected / totalBilled) * 100) : 0.0;
 
-    // Chart Dynamic Bar Groups — honest zero when no data exists
+    // Chart Dynamic Bar Groups — honest metrics from live database
     final billedInK = totalBilled / 1000;
     final collectedInK = totalCollected / 1000;
+    final outstandingInK = ((totalBilled - totalCollected) / 1000).clamp(0.0, double.infinity);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -199,7 +210,7 @@ class ReportsScreen extends ConsumerWidget {
               child: BarChart(
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
-                  maxY: (billedInK * 1.25).clamp(50, 500).toDouble(),
+                  maxY: (billedInK * 1.25).clamp(10, 500).toDouble(),
                   barTouchData: BarTouchData(enabled: true),
                   titlesData: FlTitlesData(
                     show: true,
@@ -209,11 +220,11 @@ class ReportsScreen extends ConsumerWidget {
                         getTitlesWidget: (val, meta) {
                           switch (val.toInt()) {
                             case 0:
-                              return const Text('July', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600));
+                              return const Text('Billed', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.primary));
                             case 1:
-                              return const Text('August', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600));
+                              return const Text('Collected', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.success));
                             case 2:
-                              return const Text('Current', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.primary));
+                              return const Text('Outstanding', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.warning));
                             default:
                               return const Text('');
                           }
@@ -228,19 +239,61 @@ class ReportsScreen extends ConsumerWidget {
                   borderData: FlBorderData(show: false),
                   barGroups: [
                     BarChartGroupData(x: 0, barRods: [
-                      BarChartRodData(toY: 95, color: AppColors.primaryLight, width: 14),
-                      BarChartRodData(toY: 88, color: AppColors.accent.withValues(alpha: 0.6), width: 14),
+                      BarChartRodData(toY: billedInK > 0 ? billedInK : 0.2, color: AppColors.primary, width: 20),
                     ]),
                     BarChartGroupData(x: 1, barRods: [
-                      BarChartRodData(toY: 112, color: AppColors.primaryLight, width: 14),
-                      BarChartRodData(toY: 104, color: AppColors.accent.withValues(alpha: 0.6), width: 14),
+                      BarChartRodData(toY: collectedInK > 0 ? collectedInK : 0.1, color: AppColors.success, width: 20),
                     ]),
                     BarChartGroupData(x: 2, barRods: [
-                      BarChartRodData(toY: billedInK, color: AppColors.primary, width: 14),
-                      BarChartRodData(toY: collectedInK, color: AppColors.accent, width: 14),
+                      BarChartRodData(toY: outstandingInK > 0 ? outstandingInK : 0.05, color: AppColors.warning, width: 20),
                     ]),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Clinical Waste & Expiry Assessment Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: atRiskWasteValuation > 0 ? AppColors.danger.withValues(alpha: 0.08) : AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: atRiskWasteValuation > 0 ? AppColors.danger.withValues(alpha: 0.3) : AppColors.border,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    atRiskWasteValuation > 0 ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+                    color: atRiskWasteValuation > 0 ? AppColors.danger : AppColors.success,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Waste & Expiry Risk Assessment',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          atRiskWasteValuation > 0
+                              ? '₱${atRiskWasteValuation.toStringAsFixed(2)} at risk ($atRiskUnits units across ${expiringBatches.length} batches expiring ≤ 30 days)'
+                              : 'Zero expired stock detected. All formulary batches within safe shelf-life.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: atRiskWasteValuation > 0 ? AppColors.danger : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -256,18 +309,29 @@ class ReportsScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Text('Total Billed', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                const SizedBox(width: 16),
+                const Text('Billed', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                const SizedBox(width: 14),
                 Container(
                   width: 12,
                   height: 12,
                   decoration: BoxDecoration(
-                    color: AppColors.accent,
+                    color: AppColors.success,
                     borderRadius: BorderRadius.circular(3),
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Text('Collected (Settled)', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                const Text('Collected', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                const SizedBox(width: 14),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: AppColors.warning,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Text('Outstanding', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
               ],
             ),
             const SizedBox(height: 20),

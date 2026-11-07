@@ -19,7 +19,7 @@ class ReportRepository {
           .map((row) => BillingSummaryReport.fromJson(row as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return _mockMonthlySummaries;
+      return [];
     }
   }
 
@@ -34,7 +34,7 @@ class ReportRepository {
           .map((row) => LeakageRecoveryReport.fromJson(row as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return _mockLeakageReports;
+      return [];
     }
   }
 

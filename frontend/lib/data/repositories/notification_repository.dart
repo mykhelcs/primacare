@@ -37,7 +37,7 @@ class NotificationRepository {
       final unmerged = _localNotifications.where((n) => !remoteIds.contains(n.id));
       return [...unmerged, ...remoteList];
     } catch (_) {
-      return [..._localNotifications, ..._mockNotifications];
+      return [..._localNotifications];
     }
   }
 

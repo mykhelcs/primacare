@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/models/inventory_item.dart';
 import '../providers/inventory_provider.dart';
 import '../widgets/status_badge.dart';
 import 'barcode_catalog_screen.dart';
@@ -19,6 +20,189 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final suffix = (timestamp % 100000000).toString().padLeft(8, '0');
     return '48000$suffix';
+  }
+
+  void _showItemDetailSheet(InventoryItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.all(20),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: FutureBuilder<List<InventoryBatch>>(
+            future: ref.read(inventoryRepositoryProvider).getBatchesForItem(item.id),
+            builder: (context, snapshot) {
+              final batches = snapshot.data ?? [];
+              final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Category: ${item.category} · Barcode: ${item.barcode ?? 'N/A'} · Unit: ${item.unit}',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        Column(
+                          children: [
+                            const Text('Total In-Stock', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                            const SizedBox(height: 4),
+                            Text('${item.totalStock} ${item.unit}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            const Text('Unit Cost', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                            const SizedBox(height: 4),
+                            Text('₱${item.unitCost.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            const Text('Reorder Level', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                            const SizedBox(height: 4),
+                            Text('${item.reorderLevel} ${item.unit}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.accent)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Active Batches (FEFO Dispensation Order)',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                  ),
+                  const SizedBox(height: 8),
+                  if (isLoading)
+                    const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+                  else if (batches.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'No active batches remaining in stock for this item.\nReceive new stock to replenish.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: batches.length,
+                        itemBuilder: (context, bIdx) {
+                          final batch = batches[bIdx];
+                          final now = DateTime.now();
+                          final daysLeft = batch.expiryDate.difference(now).inDays;
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: daysLeft <= 30 ? AppColors.danger.withValues(alpha: 0.5) : AppColors.border,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Batch #${batch.batchNumber}',
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Expires: ${batch.expiryDate.toIso8601String().substring(0, 10)} ($daysLeft days remaining)',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: daysLeft <= 30 ? AppColors.danger : AppColors.textSecondary,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Received: ${batch.receivedDate.toIso8601String().substring(0, 10)}',
+                                        style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '${batch.quantityRemaining} ${item.unit}',
+                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    if (daysLeft <= 30)
+                                      StatusBadge.critical(text: 'Expiring Soon')
+                                    else
+                                      StatusBadge.inStock(text: 'Active FEFO'),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   void _showAddItemDialog() {
@@ -225,58 +409,62 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
                             final item = filtered[index];
                             final isLowStock = item.isLowStock;
 
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 10),
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: AppColors.border),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                            return InkWell(
+                              onTap: () => _showItemDetailSheet(item),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surface,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: AppColors.border),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            item.name,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.textPrimary,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Barcode: ${item.barcode ?? 'N/A'} · Unit Cost: ₱${item.unitCost.toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: AppColors.textSecondary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          item.name,
-                                          style: const TextStyle(
+                                          '${item.totalStock} ${item.unit}',
+                                          style: TextStyle(
                                             fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color: AppColors.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                            color: isLowStock ? AppColors.danger : AppColors.textPrimary,
                                           ),
                                         ),
                                         const SizedBox(height: 4),
-                                        Text(
-                                          'Barcode: ${item.barcode ?? 'N/A'} · Unit Cost: ₱${item.unitCost.toStringAsFixed(2)}',
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            color: AppColors.textSecondary,
-                                          ),
-                                        ),
+                                        if (isLowStock)
+                                          StatusBadge.warning(text: 'Low Stock')
+                                        else
+                                          StatusBadge.inStock(),
                                       ],
                                     ),
-                                  ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        '${item.totalStock} ${item.unit}',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                          color: isLowStock ? AppColors.danger : AppColors.textPrimary,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      if (isLowStock)
-                                        StatusBadge.warning(text: 'Low Stock')
-                                      else
-                                        StatusBadge.inStock(),
-                                    ],
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             );
                           },

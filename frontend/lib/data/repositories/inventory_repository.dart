@@ -16,10 +16,20 @@ class InventoryRepository {
     }
 
     try {
-      final response = await _client.from('inventory_items').select();
-      final remoteList = (response as List)
-          .map((item) => InventoryItem.fromJson(item as Map<String, dynamic>))
-          .toList();
+      final response = await _client
+          .from('inventory_items')
+          .select('*, inventory_batches(quantity_remaining)');
+      final remoteList = (response as List).map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        int totalStock = 0;
+        if (map['inventory_batches'] != null && map['inventory_batches'] is List) {
+          for (final batch in map['inventory_batches'] as List) {
+            totalStock += ((batch['quantity_remaining'] as num?)?.toInt() ?? 0);
+          }
+        }
+        map['total_stock'] = totalStock;
+        return InventoryItem.fromJson(map);
+      }).toList();
 
       final remoteIds = remoteList.map((i) => i.id).toSet();
       final remoteBarcodes = remoteList.map((i) => i.barcode).toSet();
@@ -29,7 +39,8 @@ class InventoryRepository {
       );
       return [...unmerged, ...remoteList];
     } catch (_) {
-      return [..._localCreatedItems, ..._mockItems];
+      // Return unmerged local items or empty list in live client mode without masking
+      return [..._localCreatedItems];
     }
   }
 
@@ -45,15 +56,23 @@ class InventoryRepository {
     try {
       final response = await _client
           .from('inventory_items')
-          .select()
+          .select('*, inventory_batches(quantity_remaining)')
           .eq('barcode', barcode)
           .maybeSingle();
-      if (response != null) return InventoryItem.fromJson(response);
-      final found = _mockItems.where((i) => i.barcode == barcode);
-      return found.isNotEmpty ? found.first : null;
+      if (response != null) {
+        final map = Map<String, dynamic>.from(response);
+        int totalStock = 0;
+        if (map['inventory_batches'] != null && map['inventory_batches'] is List) {
+          for (final batch in map['inventory_batches'] as List) {
+            totalStock += ((batch['quantity_remaining'] as num?)?.toInt() ?? 0);
+          }
+        }
+        map['total_stock'] = totalStock;
+        return InventoryItem.fromJson(map);
+      }
+      return null;
     } catch (_) {
-      final found = _mockItems.where((i) => i.barcode == barcode);
-      return found.isNotEmpty ? found.first : null;
+      return null;
     }
   }
 
@@ -70,7 +89,22 @@ class InventoryRepository {
           .map((b) => InventoryBatch.fromJson(b as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return _mockBatches.where((b) => b.isCriticalExpiry).toList();
+      // Live fallback query on table directly if RPC is unavailable
+      try {
+        final now = DateTime.now();
+        final maxExpiry = now.add(Duration(days: daysAhead)).toIso8601String().substring(0, 10);
+        final response = await _client
+            .from('inventory_batches')
+            .select()
+            .gt('quantity_remaining', 0)
+            .lte('expiry_date', maxExpiry)
+            .order('expiry_date', ascending: true);
+        return (response as List)
+            .map((b) => InventoryBatch.fromJson(b as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        return [];
+      }
     }
   }
 
@@ -85,7 +119,8 @@ class InventoryRepository {
           .map((i) => InventoryItem.fromJson(i as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return _mockItems.where((i) => i.isLowStock).toList();
+      final all = await getInventoryItems();
+      return all.where((i) => i.isLowStock).toList();
     }
   }
 
@@ -176,14 +211,49 @@ class InventoryRepository {
       });
       return response.toString();
     } catch (_) {
-      final newBatchId = 'b_${DateTime.now().millisecondsSinceEpoch}';
-      return newBatchId;
+      // Direct table insert if RPC is missing
+      try {
+        final insertRes = await _client
+            .from('inventory_batches')
+            .insert({
+              'item_id': itemId,
+              'batch_number': batchNumber,
+              'quantity_remaining': quantity,
+              'expiry_date': expiryDate.toIso8601String().substring(0, 10),
+              'received_date': DateTime.now().toIso8601String().substring(0, 10),
+            })
+            .select('id')
+            .single();
+        return insertRes['id'] as String;
+      } catch (err) {
+        rethrow;
+      }
     }
   }
 
   Future<List<InventoryBatch>> getBatchesForItem(String itemId) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+
+    if (_client != null) {
+      try {
+        final todayStr = today.toIso8601String().substring(0, 10);
+        final response = await _client
+            .from('inventory_batches')
+            .select()
+            .eq('item_id', itemId)
+            .gt('quantity_remaining', 0)
+            .gte('expiry_date', todayStr)
+            .order('expiry_date', ascending: true)
+            .order('received_date', ascending: true);
+        return (response as List)
+            .map((b) => InventoryBatch.fromJson(b as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        return [];
+      }
+    }
+
     final batches = _mockBatches
         .where((b) =>
             b.itemId == itemId &&
@@ -210,11 +280,21 @@ class InventoryRepository {
     for (final b in batches) {
       if (needed <= 0) break;
       final deduct = b.quantityRemaining >= needed ? needed : b.quantityRemaining;
-      final idx = _mockBatches.indexWhere((x) => x.id == b.id);
-      if (idx != -1) {
-        _mockBatches[idx] = b.copyWith(
-          quantityRemaining: b.quantityRemaining - deduct,
-        );
+
+      if (_client != null) {
+        try {
+          await _client
+              .from('inventory_batches')
+              .update({'quantity_remaining': b.quantityRemaining - deduct})
+              .eq('id', b.id);
+        } catch (_) {}
+      } else {
+        final idx = _mockBatches.indexWhere((x) => x.id == b.id);
+        if (idx != -1) {
+          _mockBatches[idx] = b.copyWith(
+            quantityRemaining: b.quantityRemaining - deduct,
+          );
+        }
       }
       needed -= deduct;
     }

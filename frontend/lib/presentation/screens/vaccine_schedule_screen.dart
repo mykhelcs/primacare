@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/models/patient.dart';
+import '../../domain/models/invoice.dart';
 import '../providers/patient_provider.dart';
+import '../providers/invoice_provider.dart';
+import '../providers/inventory_provider.dart';
+import '../providers/notification_provider.dart';
 import '../widgets/status_badge.dart';
 
 class VaccineScheduleScreen extends ConsumerStatefulWidget {
@@ -26,6 +30,110 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
     _selectedPatientId = widget.initialPatientId;
   }
 
+  void _showRecordDoseDialog(Patient patient) {
+    final inventory = (ref.read(inventoryListProvider).value ?? [])
+        .where((i) => i.category.toLowerCase().contains('vaccine'))
+        .toList();
+
+    if (inventory.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No vaccine formulary items in inventory. Please seed or receive vaccines first.'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
+    String selectedItemId = inventory.first.id;
+    String selectedItemName = inventory.first.name;
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => AlertDialog(
+          title: Text('Record Immunization for ${patient.fullName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Select Vaccine from Clinic Stock:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: selectedItemId,
+                isExpanded: true,
+                items: inventory.map((item) {
+                  return DropdownMenuItem(
+                    value: item.id,
+                    child: Text('${item.name} (${item.totalStock} in stock)', style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setModalState(() {
+                      selectedItemId = val;
+                      final match = inventory.where((i) => i.id == val).firstOrNull;
+                      if (match != null) selectedItemName = match.name;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'FEFO Rule: Dispensation will allocate the oldest non-expired batch from Supabase.',
+                style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(dialogCtx);
+                // 1. Deduct stock via FEFO
+                await ref.read(inventoryRepositoryProvider).dispenseItemFEFO(
+                      itemId: selectedItemId,
+                      quantity: 1,
+                    );
+                // 2. Add line item to or create an invoice for this patient
+                final invoices = ref.read(openInvoicesProvider).value ?? [];
+                var inv = invoices.where((i) => i.patientId == patient.id && i.isOpen).firstOrNull;
+                inv ??= await ref.read(openInvoicesProvider.notifier).createInvoiceForPatient(
+                      patientId: patient.id,
+                      patientName: patient.fullName,
+                    );
+                await ref.read(openInvoicesProvider.notifier).addServiceItem(
+                      invoiceId: inv.id,
+                      serviceName: selectedItemName,
+                      fee: inventory.where((i) => i.id == selectedItemId).firstOrNull?.unitCost ?? 450.0,
+                    );
+
+                // 3. Queue an automatic booster notification for 30 days ahead
+                await ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
+                      patientId: patient.id,
+                      patientName: patient.fullName,
+                      vaccineName: '$selectedItemName Next Booster / Follow-up',
+                      dueDate: DateTime.now().add(const Duration(days: 30)),
+                    );
+
+                await ref.read(inventoryListProvider.notifier).refresh();
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Successfully recorded dose of $selectedItemName for ${patient.fullName}!'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              },
+              child: const Text('Confirm & Record Dose'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final patientsAsync = ref.watch(patientListProvider);
@@ -36,6 +144,34 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
       selectedPatient = patients.where((p) => p.id == _selectedPatientId).firstOrNull ?? patients.first;
       _selectedPatientId ??= selectedPatient.id;
     }
+
+    final allInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    final patientInvoices = selectedPatient != null
+        ? allInvoices.where((i) => i.patientId == selectedPatient?.id).toList()
+        : <Invoice>[];
+
+    final Set<String> dispensedVaccines = {};
+    for (final inv in patientInvoices) {
+      for (final li in inv.lineItems) {
+        final nameLower = li.itemName.toLowerCase();
+        if (nameLower.contains('vaccine') ||
+            nameLower.contains('hepa') ||
+            nameLower.contains('bcg') ||
+            nameLower.contains('mmr') ||
+            nameLower.contains('pentavalent') ||
+            nameLower.contains('influenza')) {
+          dispensedVaccines.add(li.itemName);
+        }
+      }
+    }
+
+    final standardSchedule = [
+      {'name': 'BCG (Bacillus Calmette–Guérin)', 'timing': 'Completed · At Birth / 1 Mo', 'key': 'bcg'},
+      {'name': 'Hepatitis B Pediatric Vaccine', 'timing': 'Completed · Dose 1 (Birth)', 'key': 'hepa'},
+      {'name': 'Pentavalent (DTP-HepB-Hib)', 'timing': 'Recommended · 6 Weeks', 'key': 'pentavalent'},
+      {'name': 'MMR (Measles, Mumps, Rubella)', 'timing': 'Scheduled · Next Due (9 Mos)', 'key': 'mmr'},
+      {'name': 'Influenza (Quadrivalent Seasonal)', 'timing': 'Recommended · Annual Seasonal', 'key': 'influenza'},
+    ];
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -75,50 +211,26 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
                       style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                     ),
                     TextButton.icon(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Immunization record updated with electronic batch stamp.'),
-                            backgroundColor: AppColors.primary,
-                          ),
-                        );
-                      },
+                      onPressed: selectedPatient != null ? () => _showRecordDoseDialog(selectedPatient!) : null,
                       icon: const Icon(Icons.add, size: 16),
                       label: const Text('Record Dose', style: TextStyle(fontSize: 12)),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                _buildDoseCard(
-                  vaccine: 'BCG (Bacillus Calmette–Guérin)',
-                  date: 'Completed · At Birth',
-                  batch: 'Batch #BCG-PH-01',
-                  isDone: true,
-                ),
-                _buildDoseCard(
-                  vaccine: 'Hepatitis B — Dose 1 (Birth)',
-                  date: 'Completed · At Birth',
-                  batch: 'Batch #HB-90-01',
-                  isDone: true,
-                ),
-                _buildDoseCard(
-                  vaccine: 'Pentavalent (DTP-HepB-Hib) — Dose 1',
-                  date: 'Completed · 6 Weeks',
-                  batch: 'Batch #PV-44-09',
-                  isDone: true,
-                ),
-                _buildDoseCard(
-                  vaccine: 'MMR (Measles, Mumps, Rubella) — Dose 1',
-                  date: 'Scheduled · Next Due',
-                  batch: 'FIFO Allocated: LOT-MMR-2027A',
-                  isDone: false,
-                ),
-                _buildDoseCard(
-                  vaccine: 'Influenza (Inactivated Quadrivalent)',
-                  date: 'Recommended · Seasonal',
-                  batch: 'FIFO Allocated: LOT-FLU-2026B',
-                  isDone: false,
-                ),
+                ...standardSchedule.map((sched) {
+                  final name = sched['name']!;
+                  final timing = sched['timing']!;
+                  final key = sched['key']!;
+                  final isDone = dispensedVaccines.any((v) => v.toLowerCase().contains(key));
+
+                  return _buildDoseCard(
+                    vaccine: name,
+                    date: isDone ? 'Administered & Recorded' : timing,
+                    batch: isDone ? 'Dispensed on Patient Encounter' : 'Awaiting Clinic Point-of-Care Allocation',
+                    isDone: isDone,
+                  );
+                }),
               ],
             ),
     );

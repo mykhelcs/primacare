@@ -4,6 +4,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/models/clinical_encounter.dart';
 import '../widgets/status_badge.dart';
 import '../providers/invoice_provider.dart';
+import '../providers/notification_provider.dart';
 
 class PatientProfileScreen extends ConsumerStatefulWidget {
   final String patientId;
@@ -179,10 +180,105 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
     );
   }
 
+  void _showScheduleReminderDialog() {
+    final msgCtrl = TextEditingController(text: 'Vaccine Follow-Up Reminder');
+    int daysAhead = 7;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          title: Text('Schedule Reminder for ${widget.patientName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: msgCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Reminder Message',
+                  hintText: 'e.g. Follow-Up Vaccine Booster / Consultation',
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: daysAhead,
+                decoration: const InputDecoration(labelText: 'Schedule Dispatch In'),
+                items: const [
+                  DropdownMenuItem(value: 1, child: Text('Tomorrow (1 Day)')),
+                  DropdownMenuItem(value: 3, child: Text('3 Days Ahead')),
+                  DropdownMenuItem(value: 7, child: Text('1 Week Ahead')),
+                  DropdownMenuItem(value: 14, child: Text('2 Weeks Ahead')),
+                  DropdownMenuItem(value: 30, child: Text('1 Month Ahead')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setModalState(() => daysAhead = val);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final text = msgCtrl.text.trim();
+                if (text.isNotEmpty) {
+                  await ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
+                        patientId: widget.patientId,
+                        patientName: widget.patientName,
+                        vaccineName: text,
+                        dueDate: DateTime.now().add(Duration(days: daysAhead)),
+                      );
+                  if (ctx.mounted && mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Automated reminder scheduled for ${widget.patientName}!'),
+                        backgroundColor: AppColors.success,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Schedule'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final allInvoices = ref.watch(openInvoicesProvider).value ?? [];
     final patientInvoices = allInvoices.where((i) => i.patientId == widget.patientId).toList();
+    final allNotifications = ref.watch(notificationListProvider).value ?? [];
+    final patientNotifications = allNotifications.where((n) => n.patientId == widget.patientId).toList();
+
+    // Extract all actual vaccines dispensed to this patient from billing line items
+    final Set<String> dispensedVaccines = {};
+    for (final inv in patientInvoices) {
+      for (final li in inv.lineItems) {
+        final nameLower = li.itemName.toLowerCase();
+        if (nameLower.contains('vaccine') ||
+            nameLower.contains('hepa') ||
+            nameLower.contains('bcg') ||
+            nameLower.contains('mmr') ||
+            nameLower.contains('pentavalent') ||
+            nameLower.contains('influenza')) {
+          dispensedVaccines.add(li.itemName);
+        }
+      }
+    }
+
+    // Standard clinical immunization formulary schedule
+    final standardSchedule = [
+      {'name': 'BCG Tuberculosis Vaccine', 'timing': 'At Birth / Initial Clinic Visit', 'reco': 'DOH Baseline Immunization'},
+      {'name': 'Hepatitis B Pediatric Vaccine', 'timing': 'At Birth / 1st Month', 'reco': 'DOH Primary Series Dose 1'},
+      {'name': 'Pentavalent (DTP-HepB-Hib) Vaccine', 'timing': '6 Weeks / 10 Weeks / 14 Weeks', 'reco': 'Pediatric Multi-Antigen Dose'},
+      {'name': 'MMR Pediatric Vaccine', 'timing': '9 Months / 12 Months', 'reco': 'Measles, Mumps, Rubella Protection'},
+      {'name': 'Inactivated Influenza Vaccine', 'timing': 'Annually / Seasonal', 'reco': 'Quadrivalent Seasonal Immunization'},
+    ];
 
     return DefaultTabController(
       length: 3,
@@ -289,24 +385,120 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
               ],
             ),
 
-            // Tab 2: Vaccine Schedule
+            // Tab 2: Dynamic Vaccine Schedule & Immunization History
             ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _buildScheduleTile('Hepatitis B — Dose 1 (Birth)', 'Administered at birth', 'Batch #HB-2026-04', true),
-                _buildScheduleTile('BCG Tuberculosis Vaccine', 'Completed at 1 month', 'Batch #BCG-2026-01', true),
-                _buildScheduleTile('Pentavalent (DTP-HepB-Hib) Dose 1', 'Completed at 6 weeks', 'Batch #PV-2026-11', true),
-                _buildScheduleTile('MMR Pediatric Vaccine (Dose 1)', 'Scheduled · Due this month', 'To be allocated via FEFO at point-of-care', false),
-                _buildScheduleTile('Inactivated Influenza (Seasonal)', 'Recommended · Approaching due', 'Awaiting clinic inventory allocation', false),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Patient Immunization Status',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${dispensedVaccines.length} of ${standardSchedule.length} core vaccines administered',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                      StatusBadge.inStock(text: '${dispensedVaccines.length} Administered'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                ...standardSchedule.map((sched) {
+                  final name = sched['name']!;
+                  final timing = sched['timing']!;
+                  final isDone = dispensedVaccines.any((v) => v.toLowerCase().contains(name.toLowerCase().split(' ').first));
+
+                  return _buildScheduleTile(
+                    name,
+                    isDone ? 'Administered & Verified at Clinic' : 'Recommended · $timing',
+                    isDone ? 'Dispensed on Billing Record' : 'Pending Allocation at Point-of-Care',
+                    isDone,
+                  );
+                }),
               ],
             ),
 
-            // Tab 3: Reminders History
+            // Tab 3: Dynamic Reminders History & Queue
             ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _buildReminderTile('Vaccine MMR Booster Due Reminder', 'SMS delivered to ${widget.phone}', true),
-                _buildReminderTile('Follow-Up Consultation Notification', 'Scheduled for next clinic week · SMS queued', false),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Automated Patient Communications',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _showScheduleReminderDialog,
+                      icon: const Icon(Icons.add, size: 14, color: Colors.white),
+                      label: const Text('New Reminder', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (patientNotifications.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.notifications_none, size: 36, color: AppColors.textMuted),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No automated reminders scheduled for ${widget.patientName} yet.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _showScheduleReminderDialog,
+                          icon: const Icon(Icons.alarm_add, size: 16),
+                          label: const Text('Schedule Vaccine / Follow-up Reminder', style: TextStyle(fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  ...patientNotifications.map((notif) {
+                    final isSent = notif.isSent;
+                    final schedDate = notif.scheduledFor != null
+                        ? notif.scheduledFor!.toIso8601String().substring(0, 10)
+                        : 'Scheduled';
+                    return _buildReminderTile(
+                      notif.message,
+                      isSent
+                          ? 'Delivered to ${widget.phone} on ${notif.sentAt?.toIso8601String().substring(0, 10) ?? 'recent'}'
+                          : 'Queued for dispatch on $schedDate · SMS to ${widget.phone}',
+                      isSent,
+                    );
+                  }),
               ],
             ),
           ],

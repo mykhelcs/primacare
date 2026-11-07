@@ -26,7 +26,7 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   final MobileScannerController _scannerController = MobileScannerController();
   final TextEditingController _barcodeInputController = TextEditingController();
-  String _currentBarcode = '4800016552011';
+  String _currentBarcode = '';
   InventoryItem? _scannedItem;
   int _quantity = 1;
   bool _isProcessing = false;
@@ -35,8 +35,6 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _barcodeInputController.text = _currentBarcode;
-    _lookupBarcode(_currentBarcode);
   }
 
   @override
@@ -44,6 +42,130 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     _scannerController.dispose();
     _barcodeInputController.dispose();
     super.dispose();
+  }
+
+  void _showFormularySearchModal() {
+    final inventory = (ref.read(inventoryListProvider).value ?? [])
+        .where((i) => i.category.toLowerCase() != 'services')
+        .toList();
+
+    String filterQuery = '';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final filtered = inventory.where((i) {
+            if (filterQuery.isEmpty) return true;
+            final q = filterQuery.toLowerCase();
+            return i.name.toLowerCase().contains(q) ||
+                (i.barcode?.toLowerCase().contains(q) ?? false) ||
+                i.category.toLowerCase().contains(q);
+          }).toList();
+
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.75,
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.inventory_2, color: AppColors.primary, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Select from Clinic Formulary',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Search drug, vaccine, or consumable name...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onChanged: (val) {
+                    setModalState(() => filterQuery = val.trim());
+                  },
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No items match your search.',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) => const Divider(height: 8),
+                          itemBuilder: (context, idx) {
+                            final item = filtered[idx];
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              title: Text(
+                                item.name,
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                              ),
+                              subtitle: Text(
+                                '${item.category} · Barcode: ${item.barcode ?? 'N/A'} · Stock: ${item.totalStock} ${item.unit}',
+                                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '₱${item.unitCost.toStringAsFixed(2)}',
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.primary),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  const Text('Tap to Select', style: TextStyle(fontSize: 10, color: AppColors.accent, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                if (item.barcode != null && item.barcode!.isNotEmpty) {
+                                  _lookupBarcode(item.barcode!);
+                                } else {
+                                  setState(() {
+                                    _scannedItem = item;
+                                    _currentBarcode = item.barcode ?? 'ITEM-${item.id}';
+                                    _quantity = 1;
+                                  });
+                                }
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _lookupBarcode(String barcode) async {
@@ -58,15 +180,17 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     final item = await repo.getItemByBarcode(cleanBarcode);
     if (mounted) {
       setState(() {
-        _scannedItem = item ??
-            InventoryItem(
-              id: 'unknown',
-              name: 'Item ($cleanBarcode)',
-              barcode: cleanBarcode,
-              unitCost: 150.00,
-            );
+        _scannedItem = item;
         _quantity = 1;
       });
+      if (item == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Item with barcode "$cleanBarcode" not found in clinic formulary.'),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+      }
     }
   }
 
@@ -167,7 +291,8 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     activeInvoice ??= openInvoices.isNotEmpty ? openInvoices.first : null;
     final activeInvoiceId = activeInvoice?.id;
 
-    final itemName = _scannedItem?.name ?? 'Loading item...';
+    final itemName = _scannedItem?.name ??
+        (_currentBarcode.isEmpty ? 'Ready to Scan Barcode' : 'Item Not Found in Formulary');
     final unitCost = _scannedItem?.unitCost ?? 0.0;
     final totalCost = unitCost * _quantity;
 
@@ -181,6 +306,11 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
           style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Search Formulary Catalog',
+            icon: const Icon(Icons.search, color: Colors.white),
+            onPressed: _showFormularySearchModal,
+          ),
           IconButton(
             icon: Icon(_isTorchOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
             onPressed: () {
@@ -240,6 +370,24 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                         ),
                       ],
                     ),
+                  ),
+                ),
+                Positioned(
+                  top: 16,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black87.withValues(alpha: 0.85),
+                      foregroundColor: AppColors.accent,
+                      side: const BorderSide(color: AppColors.accent, width: 1.2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.search, size: 16),
+                    label: const Text(
+                      "Can't scan? Search Formulary Catalog",
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: _showFormularySearchModal,
                   ),
                 ),
                 Positioned(
@@ -323,6 +471,12 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
+                  ActionChip(
+                    avatar: const Icon(Icons.search, size: 14, color: AppColors.accent),
+                    label: const Text('Search Catalog...', style: TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: _showFormularySearchModal,
+                  ),
+                  const SizedBox(width: 8),
                   const Text('Quick Test: ', style: TextStyle(color: Colors.white54, fontSize: 12)),
                   ActionChip(
                     label: const Text('Hep B Vaccine'),
@@ -444,7 +598,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    onPressed: (_isProcessing || activeInvoiceId == null)
+                    onPressed: (_isProcessing || activeInvoiceId == null || _scannedItem == null)
                         ? null
                         : () => _confirmDispense(activeInvoiceId),
                     style: ElevatedButton.styleFrom(
@@ -461,7 +615,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                         : Text(
                             activeInvoiceId == null
                                 ? 'No Active Encounter (Start an Encounter First)'
-                                : 'Confirm Dispensation & Append to Bill',
+                                : (_scannedItem == null
+                                    ? 'Scan or Select Item to Dispense'
+                                    : 'Confirm Dispensation & Append to Bill'),
                             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                           ),
                   ),

@@ -34,32 +34,26 @@ class AuthRepository {
     }
 
     if (_client != null) {
-      try {
-        final response = await _client.auth.signInWithPassword(
-          email: cleanEmail,
-          password: cleanPassword,
-        );
+      final response = await _client.auth.signInWithPassword(
+        email: cleanEmail,
+        password: cleanPassword,
+      );
 
-        final user = response.user;
-        if (user != null) {
-          final profile = StaffProfile(
-            id: user.id,
-            email: user.email ?? cleanEmail,
-            fullName: user.userMetadata?['full_name'] as String? ??
-                user.userMetadata?['name'] as String? ??
-                cleanEmail.split('@').first.toUpperCase(),
-            role: UserRole.fromString(user.userMetadata?['role'] as String?),
-            clinic: ClinicTenant.centralBranch(),
-          );
-          _fallbackProfile = profile;
-          return profile;
-        }
-      } catch (e) {
-        final errorMsg = e.toString().toLowerCase();
-        if (errorMsg.contains('invalid login credentials') ||
-            errorMsg.contains('email not confirmed')) {
-          rethrow;
-        }
+      final user = response.user;
+      if (user != null) {
+        final profile = StaffProfile(
+          id: user.id,
+          email: user.email ?? cleanEmail,
+          fullName: user.userMetadata?['full_name'] as String? ??
+              user.userMetadata?['name'] as String? ??
+              cleanEmail.split('@').first.toUpperCase(),
+          role: UserRole.fromString(user.userMetadata?['role'] as String?),
+          clinic: ClinicTenant.centralBranch(),
+        );
+        _fallbackProfile = profile;
+        return profile;
+      } else {
+        throw StateError('Authentication failed: No user returned by clinical identity server.');
       }
     }
 

@@ -32,7 +32,7 @@ class PatientRepository {
       );
       return [...unmerged, ...remoteList];
     } catch (_) {
-      return [..._localCreatedPatients, ..._mockPatients];
+      return [..._localCreatedPatients];
     }
   }
 

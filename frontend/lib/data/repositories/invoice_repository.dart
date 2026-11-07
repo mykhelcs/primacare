@@ -54,7 +54,7 @@ class InvoiceRepository {
         return Invoice.fromJson(map);
       }).toList();
     } catch (_) {
-      return _mockInvoices;
+      return [];
     }
   }
 
@@ -82,8 +82,7 @@ class InvoiceRepository {
       }
       return Invoice.fromJson(map);
     } catch (_) {
-      final found = _mockInvoices.where((i) => i.id == id);
-      return found.isNotEmpty ? found.first : (_mockInvoices.isNotEmpty ? _mockInvoices.first : null);
+      return null;
     }
   }
 
