@@ -289,17 +289,35 @@ class InvoiceRepository {
           'p_quantity': quantity,
         });
 
-        final result = DispenseResult.fromJson(response as Map<String, dynamic>);
-        if (result.success) return result;
-      } catch (_) {
-        // Fall back to robust local FEFO handling
+        if (response is Map<String, dynamic>) {
+          return DispenseResult.fromJson(response);
+        }
+      } on PostgrestException catch (e) {
+        return DispenseResult(
+          success: false,
+          message: 'Database error during dispensation: ${e.message}',
+        );
+      } catch (e) {
+        return DispenseResult(
+          success: false,
+          message: 'Network or server error during dispensation: $e',
+        );
       }
     }
 
     // 2. Local Item-Aware FEFO Dispensation
     final invRepo = InventoryRepository(client: _client);
-    final item = await invRepo.getItemByBarcode(barcode);
-    final itemName = item?.name ?? 'Clinical Item ($barcode)';
+    final item = await invRepo.getItemByBarcode(sanitizedBarcode);
+    if (item != null &&
+        item.category.toLowerCase() != 'services' &&
+        item.totalStock < quantity) {
+      return DispenseResult(
+        success: false,
+        message: 'Insufficient stock for ${item.name} (${item.totalStock} available, $quantity requested).',
+      );
+    }
+
+    final itemName = item?.name ?? 'Clinical Item ($sanitizedBarcode)';
     final unitCost = item?.unitCost ?? 150.0;
     final addedTotal = unitCost * quantity;
 

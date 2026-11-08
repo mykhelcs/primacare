@@ -3,7 +3,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:primacare/data/repositories/patient_repository.dart';
 import 'package:primacare/data/repositories/invoice_repository.dart';
+import 'package:primacare/domain/models/inventory_item.dart';
+import 'package:primacare/presentation/providers/invoice_provider.dart';
 import 'package:primacare/presentation/screens/barcode_catalog_screen.dart';
+import 'package:primacare/presentation/screens/barcode_scanner_screen.dart';
+
+class _FailingDispenseInvoiceRepo extends InvoiceRepository {
+  final bool shouldThrowException;
+  int dispenseCallCount = 0;
+
+  _FailingDispenseInvoiceRepo({this.shouldThrowException = false}) : super(client: null);
+
+  @override
+  Future<DispenseResult> dispenseItem({
+    required String barcode,
+    required String invoiceId,
+    int quantity = 1,
+  }) async {
+    dispenseCallCount++;
+    if (shouldThrowException) {
+      throw Exception('PostgrestException: Concurrent row lock conflict or network drop');
+    }
+    return const DispenseResult(
+      success: false,
+      message: 'Insufficient unexpired stock available for this item.',
+    );
+  }
+}
 
 void main() {
   group('Patient Repository & Instant Sync Tests', () {
@@ -62,6 +88,95 @@ void main() {
       // Verify actions
       expect(find.byTooltip('Export / Print Sheet'), findsOneWidget);
       expect(find.byTooltip('Open Scanner'), findsOneWidget);
+    });
+  });
+
+  group('Hardened Barcode Scanner & Asia/Manila Timezone QA Tests', () {
+    test('Hardware Debounce: blocks duplicate barcode reads within 200ms cooldown window', () {
+      final debouncer = BarcodeHardwareDebouncer(
+        cooldown: const Duration(milliseconds: 250),
+      );
+      final t0 = DateTime(2026, 11, 9, 1, 0, 0, 0);
+
+      // First scan at t=0ms is accepted
+      expect(debouncer.shouldAcceptScan('4800016552011', now: t0), isTrue);
+
+      // Duplicate scan of same item at t=120ms (< 200ms) is strictly rejected
+      expect(
+        debouncer.shouldAcceptScan(
+          '4800016552011',
+          now: t0.add(const Duration(milliseconds: 120)),
+        ),
+        isFalse,
+      );
+
+      // Duplicate scan of same item at t=200ms is still blocked within 250ms window
+      expect(
+        debouncer.shouldAcceptScan(
+          '4800016552011',
+          now: t0.add(const Duration(milliseconds: 200)),
+        ),
+        isFalse,
+      );
+
+      // Scan after cooldown (t=300ms) is accepted
+      expect(
+        debouncer.shouldAcceptScan(
+          '4800016552011',
+          now: t0.add(const Duration(milliseconds: 300)),
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('Graceful Failure: alerts nurse without false success when dispense_item fails or throws', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final failingRepo = _FailingDispenseInvoiceRepo(shouldThrowException: true);
+      bool dispenseCallbackFired = false;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            invoiceRepositoryProvider.overrideWithValue(failingRepo),
+          ],
+          child: MaterialApp(
+            home: BarcodeScannerScreen(
+              invoiceId: 'inv-1',
+              onDispensed: () => dispenseCallbackFired = true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Tap quick test chip to load Hep B Vaccine
+      await tester.tap(find.text('Hep B Vaccine'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Hepatitis B Pediatric Vaccine'), findsOneWidget);
+
+      // Tap Confirm Dispensation & Append to Bill
+      final confirmBtn = find.text('Confirm Dispensation & Append to Bill');
+      expect(confirmBtn, findsOneWidget);
+      await tester.tap(confirmBtn);
+      await tester.pumpAndSettle();
+
+      // Must NOT fire onDispensed (no false success state) and must alert nurse
+      expect(dispenseCallbackFired, isFalse);
+      expect(failingRepo.dispenseCallCount, 1);
+      expect(find.textContaining('Dispensation failed'), findsWidgets);
+    });
+
+    test('Timezone Accuracy: Asia/Manila date boundary prevents off-by-one error between midnight and 8 AM', () {
+      // 2026-11-08 18:30:00 UTC is 2026-11-09 02:30:00 AM in Asia/Manila (UTC+8)
+      final utcMidnightWindow = DateTime.utc(2026, 11, 8, 18, 30, 0);
+      final manilaDate = InventoryBatch.manilaToday(utcMidnightWindow);
+
+      expect(manilaDate.year, 2026);
+      expect(manilaDate.month, 11);
+      expect(manilaDate.day, 9);
     });
   });
 }

@@ -9,6 +9,51 @@ import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../../data/services/offline_sync_service.dart';
 
+/// Deterministic hardware & camera barcode debounce controller.
+/// Clinic laser/USB scanners and mobile cameras often emit duplicate reads
+/// within 50–200ms. This guard enforces a strict cooldown window (default 250ms)
+/// to prevent accidental double-lookup or double-billing.
+class BarcodeHardwareDebouncer {
+  final Duration cooldown;
+  String? _lastBarcode;
+  DateTime? _lastScanAt;
+  DateTime? _lastDispenseAt;
+
+  BarcodeHardwareDebouncer({
+    this.cooldown = const Duration(milliseconds: 250),
+  });
+
+  /// Returns `true` if [barcode] should be processed at [now], or `false` if it
+  /// falls within the hardware debounce cooldown window for the same barcode.
+  bool shouldAcceptScan(String barcode, {DateTime? now}) {
+    final clean = barcode.trim();
+    if (clean.isEmpty) return false;
+    final timestamp = now ?? DateTime.now();
+
+    if (_lastBarcode == clean &&
+        _lastScanAt != null &&
+        timestamp.difference(_lastScanAt!) < cooldown) {
+      return false;
+    }
+
+    _lastBarcode = clean;
+    _lastScanAt = timestamp;
+    return true;
+  }
+
+  /// Guards the dispensation action against rapid double-taps or hardware
+  /// scanner Enter-key bounce within the cooldown window.
+  bool shouldAcceptDispense({DateTime? now}) {
+    final timestamp = now ?? DateTime.now();
+    if (_lastDispenseAt != null &&
+        timestamp.difference(_lastDispenseAt!) < cooldown) {
+      return false;
+    }
+    _lastDispenseAt = timestamp;
+    return true;
+  }
+}
+
 class BarcodeScannerScreen extends ConsumerStatefulWidget {
   final String? invoiceId;
   final VoidCallback? onDispensed;
@@ -26,11 +71,16 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   final MobileScannerController _scannerController = MobileScannerController();
   final TextEditingController _barcodeInputController = TextEditingController();
+  final BarcodeHardwareDebouncer _debouncer = BarcodeHardwareDebouncer(
+    cooldown: const Duration(milliseconds: 250),
+  );
+
   String _currentBarcode = '';
   InventoryItem? _scannedItem;
   int _quantity = 1;
   bool _isProcessing = false;
   bool _isTorchOn = false;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -42,6 +92,19 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     _scannerController.dispose();
     _barcodeInputController.dispose();
     super.dispose();
+  }
+
+  void _showNurseAlert(String message, {required Color backgroundColor}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: backgroundColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showFormularySearchModal() {
@@ -147,12 +210,13 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                               onTap: () {
                                 Navigator.pop(ctx);
                                 if (item.barcode != null && item.barcode!.isNotEmpty) {
-                                  _lookupBarcode(item.barcode!);
+                                  _lookupBarcode(item.barcode!, bypassDebounce: true);
                                 } else {
                                   setState(() {
                                     _scannedItem = item;
                                     _currentBarcode = item.barcode ?? 'ITEM-${item.id}';
                                     _quantity = 1;
+                                    _errorMessage = null;
                                   });
                                 }
                               },
@@ -168,52 +232,99 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     );
   }
 
-  Future<void> _lookupBarcode(String barcode) async {
+  Future<void> _lookupBarcode(String barcode, {bool bypassDebounce = false}) async {
     final cleanBarcode = barcode.trim();
-    if (cleanBarcode.isEmpty) return;
+    if (cleanBarcode.isEmpty || _isProcessing) return;
 
-    setState(() => _currentBarcode = cleanBarcode);
+    // Hardware Debounce: reject duplicate reads within the 250ms cooldown window
+    if (!bypassDebounce && !_debouncer.shouldAcceptScan(cleanBarcode)) {
+      return;
+    }
+
+    setState(() {
+      _currentBarcode = cleanBarcode;
+      _errorMessage = null;
+    });
     if (_barcodeInputController.text != cleanBarcode) {
       _barcodeInputController.text = cleanBarcode;
     }
-    final repo = ref.read(inventoryRepositoryProvider);
-    final item = await repo.getItemByBarcode(cleanBarcode);
-    if (mounted) {
+
+    try {
+      final repo = ref.read(inventoryRepositoryProvider);
+      final item = await repo.getItemByBarcode(cleanBarcode);
+      if (!mounted) return;
+
       setState(() {
         _scannedItem = item;
         _quantity = 1;
+        _errorMessage = item == null
+            ? 'Item with barcode "$cleanBarcode" not found in clinic formulary.'
+            : null;
       });
+
       if (item == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Item with barcode "$cleanBarcode" not found in clinic formulary.'),
-            backgroundColor: AppColors.warning,
-          ),
+        _showNurseAlert(
+          'Item with barcode "$cleanBarcode" not found in clinic formulary.',
+          backgroundColor: AppColors.warning,
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      final errMsg = 'Unable to lookup barcode "$cleanBarcode". Please check network connection.';
+      setState(() {
+        _scannedItem = null;
+        _errorMessage = errMsg;
+      });
+      _showNurseAlert(errMsg, backgroundColor: AppColors.danger);
     }
   }
 
   void _onDetect(BarcodeCapture capture) {
     if (_isProcessing) return;
     final barcode = capture.barcodes.firstOrNull?.rawValue;
-    if (barcode != null && barcode.trim().isNotEmpty && barcode.trim() != _currentBarcode) {
-      _lookupBarcode(barcode);
+    if (barcode == null) return;
+    final clean = barcode.trim();
+    if (clean.isEmpty) return;
+
+    // Enforce hardware debounce on camera frames
+    if (!_debouncer.shouldAcceptScan(clean)) return;
+    if (clean != _currentBarcode || _scannedItem == null) {
+      _lookupBarcode(clean, bypassDebounce: true);
     }
   }
 
   Future<void> _confirmDispense(String targetInvoiceId) async {
+    if (_isProcessing) return;
+
+    // Hardware & UI Cooldown: block rapid duplicate dispense triggers (<250ms)
+    if (!_debouncer.shouldAcceptDispense()) {
+      return;
+    }
+
     if (_quantity < 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Dispense quantity must be at least 1.'),
-          backgroundColor: AppColors.danger,
-        ),
+      _showNurseAlert(
+        'Dispense quantity must be at least 1.',
+        backgroundColor: AppColors.danger,
       );
       return;
     }
 
-    setState(() => _isProcessing = true);
+    // Pre-flight stock validation for physical inventory items
+    final item = _scannedItem;
+    if (item != null &&
+        item.category.toLowerCase() != 'services' &&
+        item.totalStock < _quantity) {
+      final msg =
+          'Dispensation failed: Insufficient stock for ${item.name} (${item.totalStock} ${item.unit} available).';
+      setState(() => _errorMessage = msg);
+      _showNurseAlert(msg, backgroundColor: AppColors.danger);
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _errorMessage = null;
+    });
 
     final isOnline = OfflineSyncService().isOnline;
     if (!isOnline) {
@@ -227,13 +338,9 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
       );
       if (mounted) {
         setState(() => _isProcessing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Offline Mode: Dispensation of $_quantity × ${_scannedItem?.name} queued for sync!',
-            ),
-            backgroundColor: AppColors.warning,
-          ),
+        _showNurseAlert(
+          'Offline Mode: Dispensation of $_quantity × ${_scannedItem?.name} queued for sync!',
+          backgroundColor: AppColors.warning,
         );
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) widget.onDispensed?.call();
@@ -252,25 +359,26 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
       if (!mounted) return;
 
       if (result.success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Successfully dispensed $_quantity × ${result.itemName ?? _scannedItem?.name} to Invoice #$targetInvoiceId!',
-            ),
-            backgroundColor: AppColors.success,
-          ),
+        setState(() => _errorMessage = null);
+        _showNurseAlert(
+          'Successfully dispensed $_quantity × ${result.itemName ?? _scannedItem?.name} to Invoice #$targetInvoiceId!',
+          backgroundColor: AppColors.success,
         );
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) widget.onDispensed?.call();
         });
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message ?? 'Dispense failed.'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
+        final failMsg =
+            'Dispensation failed: ${result.message ?? 'Out of stock or concurrent update conflict.'}';
+        setState(() => _errorMessage = failMsg);
+        _showNurseAlert(failMsg, backgroundColor: AppColors.danger);
       }
+    } catch (e) {
+      if (!mounted) return;
+      final failMsg =
+          'Dispensation failed: Unable to complete transaction (${e.toString().replaceAll('Exception: ', '')}). Please verify stock and try again.';
+      setState(() => _errorMessage = failMsg);
+      _showNurseAlert(failMsg, backgroundColor: AppColors.danger);
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -509,6 +617,33 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_errorMessage != null) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.dangerLight,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.danger),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.danger,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [

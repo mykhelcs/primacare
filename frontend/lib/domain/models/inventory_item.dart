@@ -87,8 +87,19 @@ class InventoryBatch {
     required this.receivedDate,
   });
 
-  bool get isExpired => expiryDate.isBefore(DateTime.now());
-  int get daysUntilExpiry => expiryDate.difference(DateTime.now()).inDays;
+  /// Returns the current calendar date in Asia/Manila (UTC+8) stripped of time,
+  /// preventing off-by-one date errors between midnight and 8:00 AM PHT.
+  static DateTime manilaToday([DateTime? reference]) {
+    final utc = (reference ?? DateTime.now()).toUtc();
+    final manila = utc.add(const Duration(hours: 8));
+    return DateTime(manila.year, manila.month, manila.day);
+  }
+
+  DateTime get _expiryCalendarDate =>
+      DateTime(expiryDate.year, expiryDate.month, expiryDate.day);
+
+  bool get isExpired => _expiryCalendarDate.isBefore(manilaToday());
+  int get daysUntilExpiry => _expiryCalendarDate.difference(manilaToday()).inDays;
   bool get isCriticalExpiry => daysUntilExpiry <= 30 && daysUntilExpiry >= 0;
 
   InventoryBatch copyWith({
