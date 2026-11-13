@@ -321,7 +321,7 @@ class SupabaseSeeder {
     } catch (e) {
       if (e.toString().contains('42501') || e.toString().contains('violates row-level security')) {
         debugPrint(
-          'Supabase seeding notice: RLS policies prevented anon client seeding. Run supabase/migrations/20260929_fix_rls_and_patient_columns.sql to permit anon/authenticated seeding.',
+          'Supabase seeding notice: RLS requires an authenticated staff session before seeding clinical data.',
         );
       } else {
         debugPrint('Supabase seeding notice: $e');

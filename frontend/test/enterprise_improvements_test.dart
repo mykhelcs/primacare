@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:primacare/domain/models/staff_profile.dart';
+import 'package:primacare/domain/models/user_role.dart';
 import 'package:primacare/domain/models/invoice.dart';
 import 'package:primacare/data/services/offline_sync_service.dart';
 import 'package:primacare/data/services/biometric_service.dart';
@@ -14,7 +15,13 @@ void main() {
       expect(central.code, 'PC-CENTRAL');
       expect(north.code, 'PC-NORTH');
 
-      final staff = StaffProfile.mockNurse();
+      final staff = StaffProfile(
+        id: 'staff-nurse-1',
+        email: 'nurse@primacare.ph',
+        fullName: 'Nurse Sarah Jenkins, RN',
+        role: UserRole.nurse,
+        clinic: central,
+      );
       expect(staff.clinic.code, 'PC-CENTRAL');
 
       final switched = staff.copyWith(clinic: north);

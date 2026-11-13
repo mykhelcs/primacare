@@ -2,6 +2,14 @@ import 'package:flutter/foundation.dart';
 import '../../domain/models/invoice.dart';
 import '../../domain/models/staff_profile.dart';
 
+/// Hardware adapter contract for Bluetooth / USB ESC/POS thermal printers.
+abstract class EscPosPrinterAdapter {
+  Future<bool> sendRawText({
+    required String deviceName,
+    required String formattedText,
+  });
+}
+
 class ThermalPrinterService extends ChangeNotifier {
   static final ThermalPrinterService _instance = ThermalPrinterService._internal();
   factory ThermalPrinterService() => _instance;
@@ -9,9 +17,16 @@ class ThermalPrinterService extends ChangeNotifier {
 
   bool _isConnected = false;
   String _connectedDeviceName = 'POS-58 Bluetooth Thermal';
+  EscPosPrinterAdapter? _adapter;
 
   bool get isConnected => _isConnected;
   String get connectedDeviceName => _connectedDeviceName;
+  bool get hasHardwareAdapter => _adapter != null;
+
+  void setAdapter(EscPosPrinterAdapter? adapter) {
+    _adapter = adapter;
+    notifyListeners();
+  }
 
   void connectPrinter(String deviceName) {
     _isConnected = true;
@@ -92,6 +107,9 @@ class ThermalPrinterService extends ChangeNotifier {
     buffer.writeln(doubleDivider);
     buffer.writeln(row('TOTAL DUE:', '₱${invoice.netPayable.toStringAsFixed(2)}'));
     buffer.writeln(row('STATUS:', invoice.status.toUpperCase()));
+    if (invoice.paymentMethod != null && invoice.paymentMethod!.isNotEmpty) {
+      buffer.writeln(row('METHOD:', invoice.paymentMethod!));
+    }
     buffer.writeln(doubleDivider);
 
     // Footer
@@ -127,10 +145,20 @@ class ThermalPrinterService extends ChangeNotifier {
     return buffer.toString();
   }
 
-  /// Simulates Bluetooth transmission of ESC/POS bytes
+  /// Transmits ESC/POS payload via configured printer adapter.
   Future<bool> printText(String formattedText) async {
-    // Bluetooth send latency simulation
-    await Future.delayed(const Duration(milliseconds: 500));
+    if (_adapter != null) {
+      return _adapter!.sendRawText(
+        deviceName: _connectedDeviceName,
+        formattedText: formattedText,
+      );
+    }
+
+    if (kReleaseMode && !_isConnected) {
+      return false;
+    }
+
+    await Future.delayed(const Duration(milliseconds: 200));
     return true;
   }
 }

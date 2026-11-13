@@ -10,7 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 /**
@@ -42,13 +42,43 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const expectedCronSecret = Deno.env.get("CRON_SECRET") ?? "";
 
     if (!supabaseUrl || !supabaseServiceKey) {
       throw new Error("Missing Supabase configuration environment variables.");
     }
 
+    const authHeader = req.headers.get("authorization") ?? "";
+    const cronSecret = req.headers.get("x-cron-secret") ?? "";
+    const bearerToken = authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Require either a valid CRON_SECRET, the service role key, or an authenticated Supabase user JWT
+    const hasValidCronSecret =
+      expectedCronSecret.length > 0 && cronSecret === expectedCronSecret;
+    const hasServiceKey = bearerToken.length > 0 && bearerToken === supabaseServiceKey;
+    let hasAuthenticatedUser = false;
+
+    if (!hasValidCronSecret && !hasServiceKey && bearerToken.length > 0) {
+      const { data: userData, error: userErr } = await supabase.auth.getUser(bearerToken);
+      hasAuthenticatedUser = !userErr && Boolean(userData?.user);
+    }
+
+    if (!hasValidCronSecret && !hasServiceKey && !hasAuthenticatedUser) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized invocation." }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 401,
+        }
+      );
+    }
+
     const timeCtx = getManilaTimeContext();
+    const manilaStartOfDayIso = `${timeCtx.manilaDateStr}T00:00:00.000+08:00`;
 
     // 1. Fetch pending notifications due for delivery up to the current Asia/Manila date boundary
     const { data: queue, error: fetchErr } = await supabase
@@ -60,10 +90,54 @@ serve(async (req) => {
 
     if (fetchErr) throw fetchErr;
 
-    // 2. Check expiring batches anchored to Asia/Manila date via RPC
+    // 2. Check expiring batches anchored to Asia/Manila date via RPC and enqueue deduplicated daily alerts
     const { data: expiringBatches } = await supabase.rpc("get_expiring_batches", {
       days_ahead: 30,
     });
+
+    let expiryAlertsEnqueued = 0;
+    if (Array.isArray(expiringBatches) && expiringBatches.length > 0) {
+      const { data: existingTodayAlerts } = await supabase
+        .from("notifications_queue")
+        .select("message")
+        .eq("type", "expiry_alert")
+        .gte("created_at", manilaStartOfDayIso);
+
+      const existingMessages = new Set(
+        (existingTodayAlerts ?? []).map((row: { message: string }) => row.message)
+      );
+
+      const newAlertRows = expiringBatches
+        .map((batch: {
+          item_name: string;
+          batch_number: string;
+          quantity_remaining: number;
+          expiry_date: string;
+          days_remaining: number;
+        }) => {
+          const message =
+            `[${timeCtx.manilaDateStr}] Expiry Alert: ${batch.item_name} ` +
+            `(Batch ${batch.batch_number}) — ${batch.quantity_remaining} unit(s) ` +
+            `expiring on ${batch.expiry_date} (${batch.days_remaining}d remaining).`;
+          return {
+            patient_id: null,
+            type: "expiry_alert",
+            message,
+            scheduled_for: timeCtx.nowIso,
+            status: "pending",
+          };
+        })
+        .filter((row) => !existingMessages.has(row.message));
+
+      if (newAlertRows.length > 0) {
+        const { error: insertAlertErr } = await supabase
+          .from("notifications_queue")
+          .insert(newAlertRows);
+        if (!insertAlertErr) {
+          expiryAlertsEnqueued = newAlertRows.length;
+        }
+      }
+    }
 
     const results = [];
     const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
@@ -152,6 +226,7 @@ serve(async (req) => {
         manila_date: timeCtx.manilaDateStr,
         processed: results.length,
         expiring_batches_count: (expiringBatches ?? []).length,
+        expiry_alerts_enqueued: expiryAlertsEnqueued,
         dispatches: results,
       }),
       {

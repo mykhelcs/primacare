@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/supabase_seeder.dart';
+import '../../domain/models/invoice.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
@@ -29,6 +30,29 @@ class DashboardScreen extends ConsumerWidget {
     await ref.read(patientListProvider.notifier).refresh();
     await ref.read(inventoryListProvider.notifier).refresh();
     ref.invalidate(dashboardMetricsProvider);
+  }
+
+  void _confirmInitializeClinicData(BuildContext context, WidgetRef ref) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Initialize Clinic Essentials', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'Synchronize core clinic formulary items and seed baseline clinical data with Supabase?',
+          style: TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _initializeClinicData(context, ref);
+            },
+            child: const Text('Sync Now'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _initializeClinicData(BuildContext context, WidgetRef ref) async {
@@ -129,9 +153,234 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
+  void _showInvoicesModal(
+    BuildContext context, {
+    required String title,
+    required List<Invoice> invoices,
+    required String emptyMessage,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (invoices.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(emptyMessage, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: invoices.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, idx) {
+                      final inv = invoices[idx];
+                      return Material(
+                        color: Colors.transparent,
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: const BorderSide(color: AppColors.border),
+                          ),
+                          title: Text(inv.patientName ?? 'Patient ${inv.patientId}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          subtitle: Text('${inv.lineItems.length} items · ${inv.status.toUpperCase()}', style: const TextStyle(fontSize: 12)),
+                          trailing: Text('₱${inv.totalAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            onInvoiceTapped?.call(inv.id);
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showPatientsModal(BuildContext context, WidgetRef ref) {
+    final patients = ref.read(patientListProvider).value ?? [];
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Registered Patients (${patients.length})',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (patients.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('No patients registered yet.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: patients.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, idx) {
+                      final pat = patients[idx];
+                      return Material(
+                        color: Colors.transparent,
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: const BorderSide(color: AppColors.border),
+                          ),
+                          leading: CircleAvatar(
+                            backgroundColor: AppColors.primaryLight,
+                            child: Text(pat.fullName.isNotEmpty ? pat.fullName[0].toUpperCase() : 'P', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700)),
+                          ),
+                          title: Text(pat.fullName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          subtitle: Text(pat.contactNumber ?? 'No phone recorded', style: const TextStyle(fontSize: 12)),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  onNavigateTab?.call(1);
+                },
+                child: const Text('Open Patients Directory'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showExpiringBatchesModal(BuildContext context, WidgetRef ref) {
+    final batches = ref.read(expiringBatchesProvider).value ?? [];
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Expiring Batches (<30d: ${batches.length})',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (batches.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('All active inventory batches are safe (>30 days shelf life).', textAlign: TextAlign.center, style: TextStyle(color: AppColors.success, fontSize: 13)),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: batches.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, idx) {
+                      final b = batches[idx];
+                      return Material(
+                        color: Colors.transparent,
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(color: AppColors.danger.withValues(alpha: 0.3)),
+                          ),
+                          title: Text(b.itemName ?? 'Batch #${b.batchNumber}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          subtitle: Text('Batch #${b.batchNumber} · ${b.quantityRemaining} units · ${b.daysUntilExpiry}d left', style: const TextStyle(fontSize: 12)),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  onNavigateTab?.call(6);
+                },
+                child: const Text('Open Expiry Alerts'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final staff = ref.watch(currentStaffProfileProvider);
+    final userRole = ref.watch(currentUserRoleProvider);
     final metricsAsync = ref.watch(dashboardMetricsProvider);
     final metrics = metricsAsync.value ?? DashboardMetrics.empty();
 
@@ -170,25 +419,30 @@ class DashboardScreen extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    staff?.role.name.toUpperCase() ?? 'ADMIN / OWNER',
+                    staff?.role.displayLabel ?? userRole.displayLabel,
                     style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  staff?.clinic.name ?? 'Central Clinic',
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                Expanded(
+                  child: Text(
+                    staff?.clinic.name ?? 'Central Clinic',
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
               ],
             ),
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Initialize Clinic Essentials',
-            icon: const Icon(Icons.cloud_sync, color: Colors.white),
-            onPressed: () => _initializeClinicData(context, ref),
-          ),
+          if (userRole.canSeedData)
+            IconButton(
+              tooltip: 'Initialize Clinic Essentials',
+              icon: const Icon(Icons.cloud_sync, color: Colors.white),
+              onPressed: () => _confirmInitializeClinicData(context, ref),
+            ),
           const SizedBox(width: 8),
         ],
       ),
@@ -215,24 +469,38 @@ class DashboardScreen extends ConsumerWidget {
                     value: '₱${collectedToday.toStringAsFixed(0)}',
                     label: 'Collected Today',
                     valueColor: AppColors.success,
+                    onTap: () => _showInvoicesModal(
+                      context,
+                      title: 'Collected Today Breakdown',
+                      invoices: allInvoices.where((i) => i.isPaid).toList(),
+                      emptyMessage: 'No paid invoices recorded yet.',
+                    ),
                   ),
                   StatCard(
                     icon: Icons.receipt_long_outlined,
                     value: '₱${unpaidReceivables.toStringAsFixed(0)}',
                     label: 'Unpaid Receivables',
                     valueColor: AppColors.warning,
+                    onTap: () => _showInvoicesModal(
+                      context,
+                      title: 'Unpaid Receivables Breakdown',
+                      invoices: allInvoices.where((i) => !i.isPaid).toList(),
+                      emptyMessage: 'No unpaid invoices! All bills settled.',
+                    ),
                   ),
                   StatCard(
                     icon: Icons.people_outline,
                     value: '${metrics.todayPatientsCount}',
                     label: 'Total Patients',
                     valueColor: AppColors.accent,
+                    onTap: () => _showPatientsModal(context, ref),
                   ),
                   StatCard(
                     icon: Icons.warning_amber_rounded,
                     value: '${metrics.expiryAlertsCount}',
                     label: 'Expiring Batches (<30d)',
                     valueColor: AppColors.danger,
+                    onTap: () => _showExpiringBatchesModal(context, ref),
                   ),
                 ],
               ),
@@ -299,91 +567,23 @@ class DashboardScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => onNavigateTab?.call(7), // Receive stock tab (index 7)
-                      icon: const Icon(Icons.inventory_2_outlined, size: 16, color: AppColors.textPrimary),
-                      label: const Text('Stock In', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  if (userRole.canReceiveStock) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => onNavigateTab?.call(7), // Receive stock tab (index 7)
+                        icon: const Icon(Icons.inventory_2_outlined, size: 16, color: AppColors.textPrimary),
+                        label: const Text('Stock In', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
               const SizedBox(height: 20),
-
-              // Clinic Operations Roadmap & Verification Card for New Users
-              Container(
-                margin: const EdgeInsets.only(bottom: 20),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.verified, size: 18, color: AppColors.success),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Clinic Operational Roadmap & Assurance',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppColors.successLight,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text(
-                            'SYSTEM ACTIVE',
-                            style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _buildStepRow(
-                      stepNumber: '1',
-                      title: 'Enroll Patient',
-                      description: 'Add patient records with allergy warnings and contact numbers.',
-                      actionText: 'Directory',
-                      onTap: () => onNavigateTab?.call(1),
-                    ),
-                    const Divider(height: 16),
-                    _buildStepRow(
-                      stepNumber: '2',
-                      title: 'Inventory & Barcodes',
-                      description: 'Formulary items have auto-generated barcodes ready for label printing.',
-                      actionText: 'Barcodes',
-                      onTap: () => onNavigateTab?.call(5),
-                    ),
-                    const Divider(height: 16),
-                    _buildStepRow(
-                      stepNumber: '3',
-                      title: 'Scan & Dispense',
-                      description: 'Point camera or USB scanner gun to auto-deduct earliest batch (FIFO).',
-                      actionText: 'Scanner',
-                      onTap: onScanTapped,
-                    ),
-                    const Divider(height: 16),
-                    _buildStepRow(
-                      stepNumber: '4',
-                      title: 'Settle Bill & Print Receipt',
-                      description: 'Collect payment, mark invoice as paid, and print 58mm ESC/POS receipt.',
-                      actionText: 'Invoices',
-                      onTap: () => onNavigateTab?.call(2),
-                    ),
-                  ],
-                ),
-              ),
 
               // Dynamic Recent Invoices Header
               Row(
@@ -516,79 +716,6 @@ class DashboardScreen extends ConsumerWidget {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildStepRow({
-    required String stepNumber,
-    required String title,
-    required String description,
-    required String actionText,
-    required VoidCallback? onTap,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        CircleAvatar(
-          radius: 12,
-          backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-          child: Text(
-            stepNumber,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppColors.primary,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                description,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        TextButton(
-          onPressed: onTap,
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                actionText,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.primary,
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 14, color: AppColors.primary),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

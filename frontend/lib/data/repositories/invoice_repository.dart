@@ -63,9 +63,12 @@ class InvoiceRepository {
   );
 
   Future<Invoice?> getInvoiceById(String id) async {
-    if (_client == null || !_uuidRegex.hasMatch(id)) {
+    if (_client == null) {
       final found = _mockInvoices.where((i) => i.id == id);
       return found.isNotEmpty ? found.first : (_mockInvoices.isNotEmpty ? _mockInvoices.first : null);
+    }
+    if (!_uuidRegex.hasMatch(id)) {
+      return null;
     }
 
     try {
@@ -144,6 +147,7 @@ class InvoiceRepository {
       final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
       if (idx != -1) {
         final old = _mockInvoices[idx];
+        if (old.isPaid) return null;
         final updatedLines = [
           ...old.lineItems,
           InvoiceLineItem(
@@ -154,13 +158,8 @@ class InvoiceRepository {
             unitCost: fee,
           ),
         ];
-        final updated = Invoice(
-          id: old.id,
-          patientId: old.patientId,
-          patientName: old.patientName,
-          status: old.status,
+        final updated = old.copyWith(
           totalAmount: old.totalAmount + fee,
-          createdAt: old.createdAt,
           lineItems: updatedLines,
         );
         _mockInvoices[idx] = updated;
@@ -170,6 +169,9 @@ class InvoiceRepository {
     }
 
     try {
+      final current = await getInvoiceById(invoiceId);
+      if (current == null || current.isPaid) return null;
+
       await _client.from('invoice_line_items').insert({
         'invoice_id': invoiceId,
         'item_name': serviceName,
@@ -200,30 +202,45 @@ class InvoiceRepository {
     }
   }
 
-  Future<bool> markAsPaid(String invoiceId) async {
+  Future<bool> markAsPaid(
+    String invoiceId, {
+    String paymentMethod = 'Cash',
+  }) async {
+    final now = DateTime.now();
     if (_client == null) {
       final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
-      if (idx != -1) {
-        final old = _mockInvoices[idx];
-        _mockInvoices[idx] = Invoice(
-          id: old.id,
-          patientId: old.patientId,
-          patientName: old.patientName,
-          status: 'paid',
-          totalAmount: old.totalAmount,
-          createdAt: old.createdAt,
-          lineItems: old.lineItems,
-        );
-      }
+      if (idx == -1) return false;
+      final old = _mockInvoices[idx];
+      if (old.isPaid) return false;
+      _mockInvoices[idx] = old.copyWith(
+        status: 'paid',
+        paymentMethod: paymentMethod,
+        paidAt: now,
+      );
       return true;
     }
 
     try {
-      await _client
-          .from('invoices')
-          .update({'status': 'paid'})
-          .eq('id', invoiceId);
+      await _client.from('invoices').update({
+        'status': 'paid',
+        'payment_method': paymentMethod,
+        'paid_at': now.toUtc().toIso8601String(),
+      }).eq('id', invoiceId);
       return true;
+    } on PostgrestException catch (e) {
+      // Fallback if remote schema has not yet added payment audit columns
+      if (e.message.contains('payment_method') || e.message.contains('paid_at')) {
+        try {
+          await _client
+              .from('invoices')
+              .update({'status': 'paid'})
+              .eq('id', invoiceId);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -236,19 +253,20 @@ class InvoiceRepository {
     String? discountIdNumber,
   }) async {
     if (_client != null && _uuidRegex.hasMatch(invoiceId)) {
-      try {
-        await _client.from('invoices').update({
-          'discount_type': discountType,
-          'discount_percentage': discountType == 'none' ? 0.0 : percentage,
-          'discount_id_number': discountIdNumber,
-        }).eq('id', invoiceId);
-        return await getInvoiceById(invoiceId);
-      } catch (_) {}
+      final current = await getInvoiceById(invoiceId);
+      if (current == null || current.isPaid) return null;
+      await _client.from('invoices').update({
+        'discount_type': discountType,
+        'discount_percentage': discountType == 'none' ? 0.0 : percentage,
+        'discount_id_number': discountIdNumber,
+      }).eq('id', invoiceId);
+      return await getInvoiceById(invoiceId);
     }
 
     final idx = _mockInvoices.indexWhere((i) => i.id == invoiceId);
     if (idx != -1) {
       final old = _mockInvoices[idx];
+      if (old.isPaid) return null;
       final updated = old.copyWith(
         discountType: discountType,
         discountPercentage: discountType == 'none' ? 0.0 : percentage,
@@ -280,8 +298,14 @@ class InvoiceRepository {
       );
     }
 
-    // 1. Try remote Supabase RPC if client is connected and invoiceId is a valid UUID
-    if (_client != null && _uuidRegex.hasMatch(invoiceId)) {
+    // 1. Live Supabase RPC path
+    if (_client != null) {
+      if (!_uuidRegex.hasMatch(invoiceId)) {
+        return const DispenseResult(
+          success: false,
+          message: 'No active live invoice selected. Please create or open a patient invoice first.',
+        );
+      }
       try {
         final response = await _client.rpc('dispense_item', params: {
           'p_barcode': sanitizedBarcode,
@@ -292,6 +316,10 @@ class InvoiceRepository {
         if (response is Map<String, dynamic>) {
           return DispenseResult.fromJson(response);
         }
+        return const DispenseResult(
+          success: false,
+          message: 'Unexpected response from dispensation service.',
+        );
       } on PostgrestException catch (e) {
         return DispenseResult(
           success: false,
@@ -305,7 +333,15 @@ class InvoiceRepository {
       }
     }
 
-    // 2. Local Item-Aware FEFO Dispensation
+    // 2. Local Item-Aware FEFO Dispensation (mock / test mode)
+    final invIndex = _mockInvoices.indexWhere((i) => i.id == invoiceId);
+    if (invIndex != -1 && _mockInvoices[invIndex].isPaid) {
+      return const DispenseResult(
+        success: false,
+        message: 'Cannot dispense items onto an already paid invoice.',
+      );
+    }
+
     final invRepo = InventoryRepository(client: _client);
     final item = await invRepo.getItemByBarcode(sanitizedBarcode);
     if (item != null &&
@@ -321,11 +357,16 @@ class InvoiceRepository {
     final unitCost = item?.unitCost ?? 150.0;
     final addedTotal = unitCost * quantity;
 
-    if (item != null) {
-      await invRepo.dispenseItemFEFO(itemId: item.id, quantity: quantity);
+    if (item != null && item.category.toLowerCase() != 'services') {
+      final deducted = await invRepo.dispenseItemFEFO(itemId: item.id, quantity: quantity);
+      if (!deducted) {
+        return DispenseResult(
+          success: false,
+          message: 'Insufficient unexpired batch stock for ${item.name}.',
+        );
+      }
     }
 
-    final invIndex = _mockInvoices.indexWhere((i) => i.id == invoiceId);
     if (invIndex != -1) {
       final old = _mockInvoices[invIndex];
       final updatedLines = [

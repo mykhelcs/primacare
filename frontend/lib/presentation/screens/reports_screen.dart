@@ -1,16 +1,21 @@
+import 'dart:io';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/auth_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../providers/inventory_provider.dart';
 import '../providers/patient_provider.dart';
+import '../widgets/access_restricted_view.dart';
 import '../widgets/stat_card.dart';
 
 class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
 
-  void _exportCsv(
+  Future<void> _exportCsv(
     BuildContext context,
     WidgetRef ref, {
     required double totalBilled,
@@ -21,36 +26,113 @@ class ReportsScreen extends ConsumerWidget {
     required double inventoryValuation,
     required int totalPatients,
     required Map<String, double> categoryRecovery,
-  }) {
+  }) async {
+    final now = DateTime.now();
     final buffer = StringBuffer();
     buffer.writeln('--- PRIMACARE CLINICAL OPERATIONS & FINANCIAL SUMMARY ---');
-    buffer.writeln('Generated at: ${DateTime.now().toIso8601String()}');
+    buffer.writeln('Generated at: ${now.toIso8601String()}');
     buffer.writeln();
     buffer.writeln('METRIC,VALUE');
-    buffer.writeln('Total Billed Amount (PHP),₱${totalBilled.toStringAsFixed(2)}');
-    buffer.writeln('Total Collected Amount (PHP),₱${totalCollected.toStringAsFixed(2)}');
+    buffer.writeln('Total Billed Amount (PHP),${totalBilled.toStringAsFixed(2)}');
+    buffer.writeln('Total Collected Amount (PHP),${totalCollected.toStringAsFixed(2)}');
     buffer.writeln('Total Invoices Generated,$totalInvoices');
     buffer.writeln('Paid Invoices,$paidInvoices');
     buffer.writeln('Open Invoices,$openInvoices');
     buffer.writeln('Total Patients Enrolled,$totalPatients');
-    buffer.writeln('Total Inventory Valuation (PHP),₱${inventoryValuation.toStringAsFixed(2)}');
+    buffer.writeln('Total Inventory Valuation (PHP),${inventoryValuation.toStringAsFixed(2)}');
     buffer.writeln();
     buffer.writeln('CATEGORY,REVENUE CAPTURED AT POINT-OF-CARE (PHP)');
     categoryRecovery.forEach((category, amount) {
-      buffer.writeln('"$category",₱${amount.toStringAsFixed(2)}');
+      final escaped = category.replaceAll('"', '""');
+      buffer.writeln('"$escaped",${amount.toStringAsFixed(2)}');
     });
 
     final csvData = buffer.toString();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Exported ${csvData.length} bytes to CSV successfully!'),
-        backgroundColor: AppColors.success,
+    String? savedPath;
+
+    if (!kIsWeb) {
+      try {
+        final timestamp =
+            '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+        final file = File(
+          '${Directory.systemTemp.path}${Platform.pathSeparator}primacare_report_$timestamp.csv',
+        );
+        await file.writeAsString(csvData);
+        savedPath = file.path;
+      } catch (_) {
+        // Fallback to clipboard-only when filesystem write is restricted
+      }
+    }
+
+    await Clipboard.setData(ClipboardData(text: csvData));
+
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Financial & Clinical Report Exported'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Generated ${csvData.length} bytes and copied CSV data to clipboard.',
+              style: const TextStyle(fontSize: 13),
+            ),
+            if (savedPath != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Saved CSV file:',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                savedPath,
+                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: csvData));
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Copy Again'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
       ),
     );
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final userRole = ref.watch(currentUserRoleProvider);
+    if (!userRole.canViewFinancialReports) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: AppColors.surface,
+          elevation: 0,
+          title: const Text(
+            'Clinic Operations & Financials',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
+        ),
+        body: const AccessRestrictedView(
+          featureName: 'Financial & revenue reports',
+          requiredRoleDescription: 'Administrator',
+        ),
+      );
+    }
+
     // Watch reactive providers
     final invoices = ref.watch(openInvoicesProvider).value ?? [];
     final inventory = ref.watch(inventoryListProvider).value ?? [];

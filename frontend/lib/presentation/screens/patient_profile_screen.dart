@@ -629,7 +629,13 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
                   children: [
                     Row(
                       children: [
-                        Text(widget.patientName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                        Expanded(
+                          child: Text(
+                            widget.patientName,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         if (widget.sex != null) ...[
                           const SizedBox(width: 6),
                           Container(
@@ -647,7 +653,11 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text('DOB: ${widget.dob} · Contact: ${widget.phone}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    Text(
+                      'DOB: ${widget.dob} · Contact: ${widget.phone}',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     if (widget.address != null && widget.address!.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text('Address: ${widget.address}', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
@@ -689,6 +699,71 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
     );
   }
 
+  void _showInvoiceSummaryModal(
+    String id,
+    String desc,
+    String amount,
+    String status, {
+    required bool isPaid,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Encounter Invoice #$id', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Patient: ${widget.patientName}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Text('Status: $status', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isPaid ? AppColors.success : AppColors.primary)),
+            const SizedBox(height: 6),
+            Text('Net Payable: $amount', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            const Text('Items & Services:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+            const SizedBox(height: 4),
+            Text(desc, style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          if (widget.onStartEncounter != null)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+                widget.onStartEncounter?.call(id);
+              },
+              child: const Text('Open Invoice'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showReminderDetailModal(String title, String subtitle, bool isDelivered) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Patient Reminder Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            isDelivered ? StatusBadge.paid() : StatusBadge.warning(text: 'Pending'),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInvoiceTile(
     String id,
     String desc,
@@ -699,48 +774,57 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _showInvoiceSummaryModal(id, desc, amount, status, isPaid: isPaid),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Text(id, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-                    if (hasDiscount) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: AppColors.success.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text('20% OFF', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.success)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(id, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                          if (hasDiscount) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: AppColors.success.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text('20% OFF', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.success)),
+                            ),
+                          ],
+                        ],
                       ),
+                      const SizedBox(height: 2),
+                      Text(desc, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                     ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(amount, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    isPaid ? StatusBadge.paid() : StatusBadge.open(),
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text(desc, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(amount, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              isPaid ? StatusBadge.paid() : StatusBadge.open(),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -777,28 +861,37 @@ class _PatientProfileScreenState extends ConsumerState<PatientProfileScreen> {
   Widget _buildReminderTile(String title, String subtitle, bool isDelivered) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        children: [
-          Icon(isDelivered ? Icons.mark_email_read : Icons.hourglass_top, color: isDelivered ? AppColors.success : AppColors.warning, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _showReminderDetailModal(title, subtitle, isDelivered),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                Icon(isDelivered ? Icons.mark_email_read : Icons.hourglass_top, color: isDelivered ? AppColors.success : AppColors.warning, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ),
+                isDelivered ? StatusBadge.paid() : StatusBadge.warning(text: 'Pending'),
               ],
             ),
           ),
-          isDelivered ? StatusBadge.paid() : StatusBadge.warning(text: 'Pending'),
-        ],
+        ),
       ),
     );
   }

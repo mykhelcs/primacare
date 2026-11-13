@@ -5,6 +5,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/models/inventory_item.dart';
 import '../../domain/models/invoice.dart';
+import '../providers/auth_provider.dart';
 import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../../data/services/offline_sync_service.dart';
@@ -387,17 +388,22 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   @override
   Widget build(BuildContext context) {
     final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    final unclosedInvoices = openInvoices.where((inv) => inv.isOpen).toList();
     Invoice? activeInvoice;
     if (widget.invoiceId != null) {
-      for (final inv in openInvoices) {
+      for (final inv in unclosedInvoices) {
         if (inv.id == widget.invoiceId) {
           activeInvoice = inv;
           break;
         }
       }
     }
-    activeInvoice ??= openInvoices.isNotEmpty ? openInvoices.first : null;
+    activeInvoice ??=
+        unclosedInvoices.isNotEmpty ? unclosedInvoices.first : null;
     final activeInvoiceId = activeInvoice?.id;
+    final isMobileCameraSupported = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
 
     final itemName = _scannedItem?.name ??
         (_currentBarcode.isEmpty ? 'Ready to Scan Barcode' : 'Item Not Found in Formulary');
@@ -419,17 +425,19 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
             icon: const Icon(Icons.search, color: Colors.white),
             onPressed: _showFormularySearchModal,
           ),
-          IconButton(
-            icon: Icon(_isTorchOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
-            onPressed: () {
-              _scannerController.toggleTorch();
-              setState(() => _isTorchOn = !_isTorchOn);
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
-            onPressed: () => _scannerController.switchCamera(),
-          ),
+          if (isMobileCameraSupported) ...[
+            IconButton(
+              icon: Icon(_isTorchOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+              onPressed: () {
+                _scannerController.toggleTorch();
+                setState(() => _isTorchOn = !_isTorchOn);
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
+              onPressed: () => _scannerController.switchCamera(),
+            ),
+          ],
           const SizedBox(width: 8),
         ],
       ),
@@ -733,7 +741,10 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    onPressed: (_isProcessing || activeInvoiceId == null || _scannedItem == null)
+                    onPressed: (_isProcessing ||
+                            activeInvoiceId == null ||
+                            _scannedItem == null ||
+                            !ref.watch(currentUserRoleProvider).canDispense)
                         ? null
                         : () => _confirmDispense(activeInvoiceId),
                     style: ElevatedButton.styleFrom(
@@ -748,11 +759,13 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : Text(
-                            activeInvoiceId == null
-                                ? 'No Active Encounter (Start an Encounter First)'
-                                : (_scannedItem == null
-                                    ? 'Scan or Select Item to Dispense'
-                                    : 'Confirm Dispensation & Append to Bill'),
+                            !ref.watch(currentUserRoleProvider).canDispense
+                                ? 'Dispensation Restricted (Nurse / Admin Only)'
+                                : (activeInvoiceId == null
+                                    ? 'No Active Encounter (Start an Encounter First)'
+                                    : (_scannedItem == null
+                                        ? 'Scan or Select Item to Dispense'
+                                        : 'Confirm Dispensation & Append to Bill')),
                             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                           ),
                   ),

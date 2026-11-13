@@ -5,20 +5,22 @@ import '../services/supabase_service.dart';
 
 class AuthRepository {
   final SupabaseClient? _client;
-  StaffProfile? _fallbackProfile;
+  StaffProfile? _activeProfile;
 
-  AuthRepository({SupabaseClient? client})
-      : _client = client ?? (SupabaseService.isInitialized ? SupabaseService.client : null);
+  AuthRepository({
+    SupabaseClient? client,
+  }) : _client = client ?? (SupabaseService.isInitialized ? SupabaseService.client : null);
 
   User? get currentUser => _client?.auth.currentUser;
 
-  bool get isAuthenticated => _client?.auth.currentUser != null || _fallbackProfile != null;
+  bool get isAuthenticated => _client?.auth.currentUser != null;
 
-  StaffProfile? get activeProfile => _fallbackProfile;
+  StaffProfile? get activeProfile =>
+      _client?.auth.currentUser != null ? _activeProfile : null;
 
   void switchClinic(ClinicTenant newClinic) {
-    if (_fallbackProfile != null) {
-      _fallbackProfile = _fallbackProfile!.copyWith(clinic: newClinic);
+    if (_activeProfile != null) {
+      _activeProfile = _activeProfile!.copyWith(clinic: newClinic);
     }
   }
 
@@ -33,60 +35,55 @@ class AuthRepository {
       throw ArgumentError('Email and password cannot be empty.');
     }
 
-    if (_client != null) {
-      final response = await _client.auth.signInWithPassword(
-        email: cleanEmail,
-        password: cleanPassword,
+    final client = _client;
+    if (client == null) {
+      throw StateError(
+        'Clinical authentication server is not configured. Please provide SUPABASE_URL and SUPABASE_ANON_KEY.',
       );
-
-      final user = response.user;
-      if (user != null) {
-        final profile = StaffProfile(
-          id: user.id,
-          email: user.email ?? cleanEmail,
-          fullName: user.userMetadata?['full_name'] as String? ??
-              user.userMetadata?['name'] as String? ??
-              cleanEmail.split('@').first.toUpperCase(),
-          role: UserRole.fromString(user.userMetadata?['role'] as String?),
-          clinic: ClinicTenant.centralBranch(),
-        );
-        _fallbackProfile = profile;
-        return profile;
-      } else {
-        throw StateError('Authentication failed: No user returned by clinical identity server.');
-      }
     }
 
-    // Graceful fallback for staff accounts
-    if (cleanEmail.contains('nurse')) {
-      _fallbackProfile = StaffProfile.mockNurse();
-      return _fallbackProfile!;
-    } else if (cleanEmail.contains('doc') || cleanEmail.contains('doctor') || cleanEmail.contains('dr.')) {
-      _fallbackProfile = StaffProfile.mockDoctor();
-      return _fallbackProfile!;
-    } else if (cleanEmail.contains('admin') || cleanEmail.contains('owner')) {
-      _fallbackProfile = StaffProfile.mockAdmin();
-      return _fallbackProfile!;
-    }
-
-    final isDoctor = cleanEmail.contains('doc') || cleanEmail.contains('dr');
-    final isAdmin = cleanEmail.contains('admin') || cleanEmail.contains('owner');
-    _fallbackProfile = StaffProfile(
-      id: 'staff-user-${DateTime.now().millisecondsSinceEpoch}',
+    final response = await client.auth.signInWithPassword(
       email: cleanEmail,
-      fullName: isDoctor
-          ? 'Dr. ${cleanEmail.split('@').first.replaceAll('dr.', '').toUpperCase()}'
-          : cleanEmail.split('@').first,
-      role: isDoctor
-          ? UserRole.doctor
-          : (isAdmin ? UserRole.admin : UserRole.nurse),
+      password: cleanPassword,
+    );
+
+    final user = response.user;
+    if (user == null) {
+      throw StateError('Authentication failed: No user returned by clinical identity server.');
+    }
+
+    String? dbRole;
+    String? dbFullName;
+    try {
+      final userRow = await client
+          .from('users')
+          .select('role, full_name')
+          .eq('id', user.id)
+          .maybeSingle();
+      if (userRow != null) {
+        dbRole = userRow['role'] as String?;
+        dbFullName = userRow['full_name'] as String?;
+      }
+    } catch (_) {}
+
+    final profile = StaffProfile(
+      id: user.id,
+      email: user.email ?? cleanEmail,
+      fullName: dbFullName ??
+          user.userMetadata?['full_name'] as String? ??
+          user.userMetadata?['name'] as String? ??
+          cleanEmail.split('@').first.toUpperCase(),
+      role: UserRole.fromString(
+        dbRole ?? (user.userMetadata?['role'] as String?),
+      ),
       clinic: ClinicTenant.centralBranch(),
     );
-    return _fallbackProfile!;
+    _activeProfile = profile;
+    return profile;
   }
 
   Future<void> signOut() async {
-    _fallbackProfile = null;
+    _activeProfile = null;
     if (_client != null) {
       try {
         await _client.auth.signOut();

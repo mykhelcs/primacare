@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/services/security_service.dart';
+import '../../data/services/supabase_service.dart';
 import '../providers/auth_provider.dart';
+import '../providers/inventory_provider.dart';
 import '../providers/invoice_provider.dart';
+import '../providers/patient_provider.dart';
 import '../../data/services/offline_sync_service.dart';
 import '../../domain/models/staff_profile.dart';
 import '../../domain/models/user_role.dart';
@@ -43,6 +47,51 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
         }
       },
     );
+
+    final syncService = OfflineSyncService();
+    syncService.registerDefaultHandler((action) async {
+      switch (action.type) {
+        case SyncActionType.dispenseItem:
+          final result = await ref
+              .read(openInvoicesProvider.notifier)
+              .dispenseBarcode(
+                barcode: action.payload['barcode'] as String? ?? '',
+                invoiceId: action.payload['invoiceId'] as String? ?? '',
+                quantity: (action.payload['quantity'] as num?)?.toInt() ?? 1,
+              );
+          return result.success;
+        case SyncActionType.receiveStock:
+          final expiryStr = action.payload['expiryDate'] as String? ?? '';
+          final expiryDate = DateTime.tryParse(expiryStr);
+          if (expiryDate == null) return false;
+          await ref.read(inventoryListProvider.notifier).receiveStock(
+                itemId: action.payload['itemId'] as String? ?? '',
+                batchNumber: action.payload['batchNumber'] as String? ?? '',
+                quantity: (action.payload['quantity'] as num?)?.toInt() ?? 0,
+                expiryDate: expiryDate,
+              );
+          return true;
+        case SyncActionType.createPatient:
+          await ref.read(patientListProvider.notifier).addPatient(
+                fullName: action.payload['fullName'] as String? ?? '',
+                dateOfBirth: action.payload['dateOfBirth'] as String?,
+                contactNumber: action.payload['contactNumber'] as String?,
+                email: action.payload['email'] as String?,
+                sex: action.payload['sex'] as String?,
+                allergies: action.payload['allergies'] as String?,
+                address: action.payload['address'] as String?,
+                emergencyContact: action.payload['emergencyContact'] as String?,
+              );
+          return true;
+        case SyncActionType.markPaid:
+          return ref.read(openInvoicesProvider.notifier).markInvoicePaid(
+                action.payload['invoiceId'] as String? ?? '',
+                paymentMethod:
+                    action.payload['paymentMethod'] as String? ?? 'Cash',
+              );
+      }
+    });
+    unawaited(syncService.restoreQueue());
   }
 
   void _showBiometricLockDialog() {
@@ -131,6 +180,119 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     });
   }
 
+  void _showSwitchBranchModal(StaffProfile? staff) {
+    final branches = [
+      ClinicTenant.centralBranch(),
+      ClinicTenant.northBranch(),
+    ];
+    final currentCode = staff?.clinic.code ?? 'PC-CENTRAL';
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 20),
+            SizedBox(width: 8),
+            Text('Select Clinic Branch', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: branches.map((branch) {
+            final isSelected = branch.code == currentCode;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: isSelected ? AppColors.primaryLight : AppColors.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(color: isSelected ? AppColors.primary : AppColors.border),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  dense: true,
+                  title: Text(branch.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  subtitle: Text('${branch.code} · ${branch.address}', style: const TextStyle(fontSize: 11)),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle, color: AppColors.primary, size: 20)
+                      : const Icon(Icons.chevron_right, size: 18),
+                  onTap: () {
+                    ref.read(authControllerProvider.notifier).switchClinic(branch);
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Switched active branch to ${branch.name}'),
+                        backgroundColor: AppColors.primary,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ],
+      ),
+    );
+  }
+
+  void _showOfflineSyncModal() {
+    final syncService = OfflineSyncService();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.sync, color: AppColors.primary, size: 20),
+            SizedBox(width: 8),
+            Text('Offline Sync Queue', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: ListenableBuilder(
+          listenable: syncService,
+          builder: (_, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Connection: ${syncService.isOnline ? 'Online' : 'Offline'}',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: syncService.isOnline ? AppColors.success : AppColors.warning,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Pending queued actions: ${syncService.pendingCount}',
+                style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          ElevatedButton.icon(
+            onPressed: syncService.isSyncing
+                ? null
+                : () {
+                    syncService.flushPendingQueue();
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Checking & flushing offline action queue...')),
+                    );
+                  },
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('Flush Queue'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _handleSignOut() async {
     final shouldSignOut = await showDialog<bool>(
       context: context,
@@ -168,8 +330,13 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
     }
 
     final openInvoices = ref.watch(openInvoicesProvider).value ?? [];
+    final openList = openInvoices.where((inv) => inv.isOpen).toList();
     final activeInvoiceId = _selectedInvoiceId ??
-        (openInvoices.isNotEmpty ? openInvoices.first.id : 'inv-1');
+        (openList.isNotEmpty
+            ? openList.first.id
+            : (openInvoices.isNotEmpty
+                ? openInvoices.first.id
+                : (!SupabaseService.isInitialized ? 'inv-1' : '')));
 
     final screens = <Widget>[
       DashboardScreen(
@@ -220,7 +387,7 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                   } else if (idx == 4) {
                     Scaffold.of(scaffoldContext).openDrawer();
                   } else {
-                    setState(() => _selectedIndex = idx);
+                    _navigateToTab(idx, userRole);
                   }
                 },
                 items: const [
@@ -334,49 +501,73 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                     ],
                   ),
                 ),
-                // Multi-Tenant Clinic Switcher
-                ListTile(
-                  leading: const Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 20),
-                  title: const Text('Switch Branch', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  subtitle: Text(staff?.clinic.code ?? 'PC-CENTRAL', style: const TextStyle(fontSize: 11)),
-                  trailing: const Icon(Icons.swap_horiz, size: 20),
-                  onTap: () {
-                    final current = staff?.clinic.code ?? 'PC-CENTRAL';
-                    final target = current == 'PC-CENTRAL'
-                        ? ClinicTenant.northBranch()
-                        : ClinicTenant.centralBranch();
-                    ref.read(authControllerProvider.notifier).switchClinic(target);
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Switched active branch to ${target.name}'),
-                        backgroundColor: AppColors.primary,
+                // Multi-Tenant Clinic Switcher (Admin only)
+                if (userRole.canSwitchBranch)
+                  ListTile(
+                    leading: const Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 20),
+                    title: const Text('Switch Branch', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    subtitle: Text(staff?.clinic.code ?? 'PC-CENTRAL', style: const TextStyle(fontSize: 11)),
+                    trailing: const Icon(Icons.swap_horiz, size: 20),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showSwitchBranchModal(staff);
+                    },
+                  ),
+                // Offline Sync Queue Pill
+                ListenableBuilder(
+                  listenable: OfflineSyncService(),
+                  builder: (context, _) {
+                    final syncService = OfflineSyncService();
+                    final pending = syncService.pendingCount;
+                    final syncing = syncService.isSyncing;
+                    final isOnline = syncService.isOnline;
+
+                    final statusText = syncing
+                        ? 'Syncing $pending action(s)...'
+                        : (isOnline
+                            ? 'Online ($pending pending action${pending == 1 ? '' : 's'})'
+                            : 'Offline ($pending queued)');
+                    final statusColor = syncing
+                        ? AppColors.primary
+                        : (isOnline && pending == 0
+                            ? AppColors.success
+                            : AppColors.warning);
+
+                    return ListTile(
+                      leading: const Icon(Icons.sync, color: AppColors.primary, size: 20),
+                      title: const Text(
+                        'Offline Sync Status',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        statusText,
+                        style: TextStyle(fontSize: 11, color: statusColor),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showOfflineSyncModal();
+                      },
+                      trailing: IconButton(
+                        icon: syncing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 18),
+                        onPressed: syncing
+                            ? null
+                            : () {
+                                syncService.flushPendingQueue();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Checking & flushing offline action queue...'),
+                                  ),
+                                );
+                              },
                       ),
                     );
                   },
-                ),
-                // Offline Sync Queue Pill
-                ListTile(
-                  leading: const Icon(Icons.sync, color: AppColors.primary, size: 20),
-                  title: const Text('Offline Sync Status', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    OfflineSyncService().isOnline
-                        ? 'Online (0 pending actions)'
-                        : 'Offline (${OfflineSyncService().pendingCount} queued)',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: OfflineSyncService().isOnline ? AppColors.success : AppColors.warning,
-                    ),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    onPressed: () {
-                      OfflineSyncService().flushPendingQueue();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Checking & flushing offline action queue...')),
-                      );
-                    },
-                  ),
                 ),
                 const Divider(),
                 ...List.generate(_navLabels.length, (idx) {
@@ -510,6 +701,20 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
                       ),
                     ),
                     const Divider(),
+                    if (userRole.canSwitchBranch)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 18),
+                        title: const Text('Switch Branch', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        subtitle: Text(staff?.clinic.code ?? 'PC-CENTRAL', style: const TextStyle(fontSize: 10)),
+                        onTap: () => _showSwitchBranchModal(staff),
+                      ),
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.sync, color: AppColors.primary, size: 18),
+                      title: const Text('Offline Sync Queue', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      onTap: _showOfflineSyncModal,
+                    ),
                     ListTile(
                       dense: true,
                       leading: const Icon(Icons.logout, color: AppColors.danger, size: 18),

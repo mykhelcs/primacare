@@ -5,6 +5,7 @@ import '../providers/inventory_provider.dart';
 
 import '../../data/services/thermal_printer_service.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/access_restricted_view.dart';
 
 class ReceiveStockScreen extends ConsumerStatefulWidget {
   const ReceiveStockScreen({super.key});
@@ -37,7 +38,67 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
     super.dispose();
   }
 
+  void _showBatchLabelPreviewModal(String labelText) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.print, color: AppColors.primary, size: 20),
+            SizedBox(width: 8),
+            Text('Batch Label Print Preview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: SelectableText(
+            labelText,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          ElevatedButton.icon(
+            onPressed: () {
+              ThermalPrinterService().printText(labelText);
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Batch barcode stickers dispatched to Bluetooth Printer!'),
+                  backgroundColor: AppColors.primary,
+                ),
+              );
+            },
+            icon: const Icon(Icons.print, size: 16),
+            label: const Text('Print Labels'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickExpiryDate() async {
+    final current = DateTime.tryParse(_expiryController.text) ?? DateTime.now().add(const Duration(days: 365));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (picked != null) {
+      setState(() {
+        _expiryController.text = picked.toIso8601String().substring(0, 10);
+      });
+    }
+  }
+
   Future<void> _submitStock() async {
+    if (!ref.read(currentUserRoleProvider).canReceiveStock) return;
     final qty = int.tryParse(_qtyController.text) ?? 0;
     if (qty <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -67,53 +128,77 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
         ? _batchController.text
         : 'LOT-${DateTime.now().millisecondsSinceEpoch}';
 
-    final repo = ref.read(inventoryRepositoryProvider);
-    await repo.receiveStockBatch(
-      itemId: _selectedItemId!,
-      batchNumber: batchNum,
-      quantity: qty,
-      expiryDate: expiry,
-    );
+    try {
+      await ref.read(inventoryListProvider.notifier).receiveStock(
+            itemId: _selectedItemId!,
+            batchNumber: batchNum,
+            quantity: qty,
+            expiryDate: expiry,
+          );
+      ref.invalidate(expiringBatchesProvider);
+      ref.invalidate(lowStockItemsProvider);
 
-    await ref.read(inventoryListProvider.notifier).refresh();
+      if (mounted) {
+        setState(() => _isLoading = false);
+        final clinic = ref.read(currentClinicProvider);
 
-    if (mounted) {
-      setState(() => _isLoading = false);
-      final clinic = ref.read(currentClinicProvider);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Successfully received $qty units into batch ($batchNum)!'),
-          backgroundColor: AppColors.success,
-          action: SnackBarAction(
-            label: 'Print Labels',
-            textColor: Colors.white,
-            onPressed: () {
-              final labelText = ThermalPrinterService().generateBatchBarcodeLabelText(
-                itemName: _selectedItemName,
-                batchNumber: batchNum,
-                barcode: 'BAR-${batchNum.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
-                expiryDate: expiry,
-                clinic: clinic,
-              );
-              ThermalPrinterService().printText(labelText);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Batch barcode stickers dispatched to Bluetooth Printer!'),
-                  backgroundColor: AppColors.primary,
-                ),
-              );
-            },
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Successfully received $qty units into batch ($batchNum)!'),
+            backgroundColor: AppColors.success,
+            action: SnackBarAction(
+              label: 'Print Labels',
+              textColor: Colors.white,
+              onPressed: () {
+                final labelText = ThermalPrinterService().generateBatchBarcodeLabelText(
+                  itemName: _selectedItemName,
+                  batchNumber: batchNum,
+                  barcode: 'BAR-${batchNum.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
+                  expiryDate: expiry,
+                  clinic: clinic,
+                );
+                _showBatchLabelPreviewModal(labelText);
+              },
+            ),
           ),
-        ),
-      );
-      _qtyController.clear();
-      _batchController.text = 'LOT-${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().second}';
+        );
+        _qtyController.clear();
+        _batchController.text = 'LOT-${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().second}';
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to receive stock: $e'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final userRole = ref.watch(currentUserRoleProvider);
+    if (!userRole.canReceiveStock) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: AppColors.surface,
+          elevation: 0,
+          title: const Text(
+            'Receive Inbound Stock (Add Batch)',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
+        ),
+        body: const AccessRestrictedView(
+          featureName: 'Receiving inbound warehouse stock',
+          requiredRoleDescription: 'Admin or Nurse',
+        ),
+      );
+    }
+
     final inventoryAsync = ref.watch(inventoryListProvider);
     final items = (inventoryAsync.value ?? [])
         .where((i) => i.category != 'Services')
@@ -205,7 +290,12 @@ class _ReceiveStockScreenState extends ConsumerState<ReceiveStockScreen> {
               const SizedBox(height: 6),
               TextField(
                 controller: _expiryController,
-                decoration: const InputDecoration(hintText: 'e.g. 2027-10-31'),
+                readOnly: true,
+                onTap: _pickExpiryDate,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. 2027-10-31',
+                  prefixIcon: Icon(Icons.calendar_today_outlined, size: 18),
+                ),
               ),
               const SizedBox(height: 24),
               ElevatedButton(

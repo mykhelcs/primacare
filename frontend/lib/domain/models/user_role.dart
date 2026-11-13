@@ -19,6 +19,12 @@ enum UserRole {
   bool get canViewFinancialReports => this == UserRole.admin;
   bool get canDispense => this == UserRole.nurse || this == UserRole.admin;
   bool get canReceiveStock => this == UserRole.admin || this == UserRole.nurse;
+  bool get canCollectPayment => this == UserRole.admin || this == UserRole.nurse;
+  bool get canAddClinicalService => true;
+  bool get canSeedData => this == UserRole.admin;
+  bool get canSwitchBranch => this == UserRole.admin;
+
+  String get displayLabel => name.toUpperCase();
 
   bool isTabAccessible(int tabIndex) {
     if (tabIndex == 10) return canViewFinancialReports;

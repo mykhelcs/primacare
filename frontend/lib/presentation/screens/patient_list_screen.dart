@@ -316,9 +316,11 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                             fontWeight: FontWeight.w600,
                                             color: AppColors.textPrimary,
                                           ),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      if (patient.sex != null)
+                                      if (patient.sex != null) ...[
+                                        const SizedBox(width: 6),
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                           decoration: BoxDecoration(
@@ -330,6 +332,7 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                             style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.bold),
                                           ),
                                         ),
+                                      ],
                                     ],
                                   ),
                                   subtitle: Column(
@@ -339,6 +342,7 @@ class _PatientListScreenState extends ConsumerState<PatientListScreen> {
                                       Text(
                                         'DOB: ${patient.dateOfBirth ?? 'N/A'} · ${patient.contactNumber ?? 'N/A'}',
                                         style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                       if (patient.allergies != null && patient.allergies!.isNotEmpty && patient.allergies != 'None recorded') ...[
                                         const SizedBox(height: 3),

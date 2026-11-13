@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/utils/supabase_seeder.dart';
 import '../providers/auth_provider.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -36,21 +35,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     if (success && mounted) {
       widget.onLoginSuccess?.call();
-    }
-  }
-
-  Future<void> _initializeClinicNecessities() async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Initializing clinical formulary and essentials...')),
-    );
-    await SupabaseSeeder.seedInitialClinicalData();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Clinic essentials & formulary ready!'),
-          backgroundColor: AppColors.success,
-        ),
-      );
     }
   }
 
@@ -274,20 +258,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 const Text(
                                   'Authorized clinical staff credentials only. Permissions are enforced based on assigned role (Doctor, Nurse, Admin).',
                                   style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                                ),
-                                const SizedBox(height: 10),
-                                OutlinedButton.icon(
-                                  onPressed: authState.isLoading ? null : _initializeClinicNecessities,
-                                  icon: const Icon(Icons.cloud_sync, size: 16),
-                                  label: const Text(
-                                    'First-Time Setup: Initialize Clinic Formulary',
-                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
-                                    side: const BorderSide(color: AppColors.primary),
-                                    foregroundColor: AppColors.primary,
-                                  ),
                                 ),
                               ],
                             ),

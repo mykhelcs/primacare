@@ -105,34 +105,4 @@ class StaffProfile {
       'clinic_id': clinic.id,
     };
   }
-
-  static StaffProfile mockNurse() {
-    return StaffProfile(
-      id: 'staff-nurse-1',
-      email: 'nurse@primacare.ph',
-      fullName: 'Nurse Sarah Jenkins, RN',
-      role: UserRole.nurse,
-      clinic: ClinicTenant.centralBranch(),
-    );
-  }
-
-  static StaffProfile mockDoctor() {
-    return StaffProfile(
-      id: 'staff-doc-1',
-      email: 'doctor@primacare.ph',
-      fullName: 'Dr. Alejandro Cruz, MD',
-      role: UserRole.doctor,
-      clinic: ClinicTenant.centralBranch(),
-    );
-  }
-
-  static StaffProfile mockAdmin() {
-    return StaffProfile(
-      id: 'staff-admin-1',
-      email: 'admin@primacare.ph',
-      fullName: 'Admin Mark Villareal',
-      role: UserRole.admin,
-      clinic: ClinicTenant.centralBranch(),
-    );
-  }
 }

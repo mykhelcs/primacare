@@ -10,6 +10,32 @@ class InventoryRepository {
 
   static final List<InventoryItem> _localCreatedItems = [];
 
+  /// Sums remaining stock across non-expired batches using Asia/Manila calendar date.
+  static int calculateActiveStockFromBatches(
+    List<dynamic> batches, {
+    DateTime? today,
+  }) {
+    final manilaDate = today ?? InventoryBatch.manilaToday();
+    int total = 0;
+    for (final raw in batches) {
+      if (raw is! Map) continue;
+      final qty = (raw['quantity_remaining'] as num?)?.toInt() ?? 0;
+      if (qty <= 0) continue;
+      final expStr = raw['expiry_date'] as String?;
+      if (expStr != null && expStr.isNotEmpty) {
+        final parsed = DateTime.tryParse(expStr);
+        if (parsed != null) {
+          final expCal = DateTime(parsed.year, parsed.month, parsed.day);
+          if (expCal.isBefore(manilaDate)) {
+            continue;
+          }
+        }
+      }
+      total += qty;
+    }
+    return total;
+  }
+
   Future<List<InventoryItem>> getInventoryItems() async {
     if (_client == null) {
       return [..._localCreatedItems, ..._mockItems];
@@ -18,16 +44,12 @@ class InventoryRepository {
     try {
       final response = await _client
           .from('inventory_items')
-          .select('*, inventory_batches(quantity_remaining)');
+          .select('*, inventory_batches(quantity_remaining, expiry_date)');
       final remoteList = (response as List).map((row) {
         final map = Map<String, dynamic>.from(row as Map);
-        int totalStock = 0;
-        if (map['inventory_batches'] != null && map['inventory_batches'] is List) {
-          for (final batch in map['inventory_batches'] as List) {
-            totalStock += ((batch['quantity_remaining'] as num?)?.toInt() ?? 0);
-          }
-        }
-        map['total_stock'] = totalStock;
+        final batches = map['inventory_batches'];
+        map['total_stock'] =
+            batches is List ? calculateActiveStockFromBatches(batches) : 0;
         return InventoryItem.fromJson(map);
       }).toList();
 
@@ -39,7 +61,6 @@ class InventoryRepository {
       );
       return [...unmerged, ...remoteList];
     } catch (_) {
-      // Return unmerged local items or empty list in live client mode without masking
       return [..._localCreatedItems];
     }
   }
@@ -56,18 +77,14 @@ class InventoryRepository {
     try {
       final response = await _client
           .from('inventory_items')
-          .select('*, inventory_batches(quantity_remaining)')
+          .select('*, inventory_batches(quantity_remaining, expiry_date)')
           .eq('barcode', barcode)
           .maybeSingle();
       if (response != null) {
         final map = Map<String, dynamic>.from(response);
-        int totalStock = 0;
-        if (map['inventory_batches'] != null && map['inventory_batches'] is List) {
-          for (final batch in map['inventory_batches'] as List) {
-            totalStock += ((batch['quantity_remaining'] as num?)?.toInt() ?? 0);
-          }
-        }
-        map['total_stock'] = totalStock;
+        final batches = map['inventory_batches'];
+        map['total_stock'] =
+            batches is List ? calculateActiveStockFromBatches(batches) : 0;
         return InventoryItem.fromJson(map);
       }
       return null;
@@ -78,7 +95,9 @@ class InventoryRepository {
 
   Future<List<InventoryBatch>> getExpiringBatches({int daysAhead = 30}) async {
     if (_client == null) {
-      return _mockBatches.where((b) => b.isCriticalExpiry).toList();
+      return _mockBatches
+          .where((b) => !b.isExpired && b.daysUntilExpiry <= daysAhead)
+          .toList();
     }
 
     try {
@@ -91,12 +110,15 @@ class InventoryRepository {
     } catch (_) {
       // Live fallback query on table directly if RPC is unavailable
       try {
-        final now = DateTime.now();
-        final maxExpiry = now.add(Duration(days: daysAhead)).toIso8601String().substring(0, 10);
+        final today = InventoryBatch.manilaToday();
+        final todayStr = today.toIso8601String().substring(0, 10);
+        final maxExpiry =
+            today.add(Duration(days: daysAhead)).toIso8601String().substring(0, 10);
         final response = await _client
             .from('inventory_batches')
             .select()
             .gt('quantity_remaining', 0)
+            .gte('expiry_date', todayStr)
             .lte('expiry_date', maxExpiry)
             .order('expiry_date', ascending: true);
         return (response as List)
@@ -133,23 +155,21 @@ class InventoryRepository {
     int reorderLevel = 10,
   }) async {
     if (_client != null) {
-      try {
-        final response = await _client
-            .from('inventory_items')
-            .insert({
-              'name': name,
-              'barcode': barcode,
-              'unit': unit,
-              'unit_cost': unitCost,
-              'category': category,
-              'reorder_level': reorderLevel,
-            })
-            .select()
-            .single();
-        final created = InventoryItem.fromJson(response);
-        _localCreatedItems.insert(0, created);
-        return created;
-      } catch (_) {}
+      final response = await _client
+          .from('inventory_items')
+          .insert({
+            'name': name,
+            'barcode': barcode,
+            'unit': unit,
+            'unit_cost': unitCost,
+            'category': category,
+            'reorder_level': reorderLevel,
+          })
+          .select()
+          .single();
+      final created = InventoryItem.fromJson(response);
+      _localCreatedItems.insert(0, created);
+      return created;
     }
 
     final fallback = InventoryItem(
@@ -232,8 +252,7 @@ class InventoryRepository {
   }
 
   Future<List<InventoryBatch>> getBatchesForItem(String itemId) async {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final today = InventoryBatch.manilaToday();
 
     if (_client != null) {
       try {
@@ -274,20 +293,23 @@ class InventoryRepository {
     required String itemId,
     required int quantity,
   }) async {
+    if (quantity <= 0) return false;
     final batches = await getBatchesForItem(itemId);
-    int needed = quantity;
+    final totalAvailable = batches.fold<int>(0, (sum, b) => sum + b.quantityRemaining);
+    if (totalAvailable < quantity) {
+      return false;
+    }
 
+    int needed = quantity;
     for (final b in batches) {
       if (needed <= 0) break;
       final deduct = b.quantityRemaining >= needed ? needed : b.quantityRemaining;
 
       if (_client != null) {
-        try {
-          await _client
-              .from('inventory_batches')
-              .update({'quantity_remaining': b.quantityRemaining - deduct})
-              .eq('id', b.id);
-        } catch (_) {}
+        await _client
+            .from('inventory_batches')
+            .update({'quantity_remaining': b.quantityRemaining - deduct})
+            .eq('id', b.id);
       } else {
         final idx = _mockBatches.indexWhere((x) => x.id == b.id);
         if (idx != -1) {
@@ -305,7 +327,7 @@ class InventoryRepository {
       final newStock = (old.totalStock - quantity) >= 0 ? (old.totalStock - quantity) : 0;
       _mockItems[itemIdx] = old.copyWith(totalStock: newStock);
     }
-    return true;
+    return needed == 0;
   }
 
   static final List<InventoryItem> _mockItems = [

@@ -118,6 +118,84 @@ class NotificationsScreen extends ConsumerWidget {
     );
   }
 
+  void _showNotificationDetailModal(
+    BuildContext context,
+    WidgetRef ref, {
+    required NotificationItem item,
+  }) {
+    final isSent = !item.isPending;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              isSent ? Icons.mark_email_read_outlined : Icons.schedule,
+              color: isSent ? AppColors.success : AppColors.warning,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            const Text('Reminder Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              item.patientName ?? 'Patient ${item.patientId}',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              item.type.replaceAll('_', ' ').toUpperCase(),
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.primary),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Text(
+                item.message,
+                style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              isSent
+                  ? 'Delivered: ${item.sentAt?.toString().substring(0, 16) ?? 'Sent via SMS/Email'}'
+                  : 'Scheduled: ${item.scheduledFor?.toString().substring(0, 16) ?? 'Pending'}',
+              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          if (!isSent)
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                ref.read(notificationListProvider.notifier).sendNotification(item.id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Dispatched reminder via Twilio SMS & SendGrid Email!'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              },
+              icon: const Icon(Icons.send, size: 16),
+              label: const Text('Send Now'),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifsAsync = ref.watch(notificationListProvider);
@@ -190,6 +268,7 @@ class NotificationsScreen extends ConsumerWidget {
             ...pending.map((n) => _buildItem(
                   context: context,
                   ref: ref,
+                  item: n,
                   id: n.id,
                   patient: n.patientName ?? 'Patient ${n.patientId}',
                   type: n.type.replaceAll('_', ' ').toUpperCase(),
@@ -213,6 +292,7 @@ class NotificationsScreen extends ConsumerWidget {
             ...sent.map((n) => _buildItem(
                   context: context,
                   ref: ref,
+                  item: n,
                   id: n.id,
                   patient: n.patientName ?? 'Patient ${n.patientId}',
                   type: n.type.replaceAll('_', ' ').toUpperCase(),
@@ -229,6 +309,7 @@ class NotificationsScreen extends ConsumerWidget {
   Widget _buildItem({
     required BuildContext context,
     required WidgetRef ref,
+    required NotificationItem item,
     required String id,
     required String patient,
     required String type,
@@ -237,48 +318,57 @@ class NotificationsScreen extends ConsumerWidget {
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        children: [
-          Icon(
-            isSent ? Icons.check_circle_outline : Icons.schedule,
-            color: isSent ? AppColors.success : AppColors.warning,
-            size: 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _showNotificationDetailModal(context, ref, item: item),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(patient, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                const SizedBox(height: 2),
-                Text(type, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                const SizedBox(height: 2),
-                Text(time, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Icon(
+                  isSent ? Icons.check_circle_outline : Icons.schedule,
+                  color: isSent ? AppColors.success : AppColors.warning,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(patient, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      const SizedBox(height: 2),
+                      Text(type, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      const SizedBox(height: 2),
+                      Text(time, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                    ],
+                  ),
+                ),
+                if (!isSent)
+                  TextButton(
+                    onPressed: () {
+                      ref.read(notificationListProvider.notifier).sendNotification(id);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Dispatched reminder via Twilio SMS & SendGrid Email!'),
+                          backgroundColor: AppColors.success,
+                        ),
+                      );
+                    },
+                    child: const Text('Send Now', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  )
+                else
+                  StatusBadge.paid(),
               ],
             ),
           ),
-          if (!isSent)
-            TextButton(
-              onPressed: () {
-                ref.read(notificationListProvider.notifier).sendNotification(id);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Dispatched reminder via Twilio SMS & SendGrid Email!'),
-                    backgroundColor: AppColors.success,
-                  ),
-                );
-              },
-              child: const Text('Send Now', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-            )
-          else
-            StatusBadge.paid(),
-        ],
+        ),
       ),
     );
   }

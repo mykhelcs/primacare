@@ -563,10 +563,16 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                   setState(() => _isProcessing = true);
                   final success = await ref
                       .read(openInvoicesProvider.notifier)
-                      .markInvoicePaid(widget.invoiceId);
+                      .markInvoicePaid(
+                        widget.invoiceId,
+                        paymentMethod: selectedMethod,
+                      );
                   if (mounted) {
                     setState(() => _isProcessing = false);
                     if (success) {
+                      final updatedInvoice =
+                          ref.read(invoiceDetailProvider(widget.invoiceId)).value ??
+                              invoice;
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text('Payment settled via $selectedMethod! Marked as Paid.'),
@@ -574,7 +580,7 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                           action: SnackBarAction(
                             label: 'Print Receipt',
                             textColor: Colors.white,
-                            onPressed: () => _showPrintDialog(invoice),
+                            onPressed: () => _showPrintDialog(updatedInvoice),
                           ),
                         ),
                       );
@@ -608,11 +614,12 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final userRole = ref.watch(currentUserRoleProvider);
     final invoiceAsync = ref.watch(invoiceDetailProvider(widget.invoiceId));
     final invoice = invoiceAsync.value;
 
     final isPaid = invoice?.isPaid ?? false;
-    final patientName = invoice?.patientName ?? 'Juan Dela Cruz';
+    final patientName = invoice?.patientName ?? 'No Active Invoice Selected';
     final items = invoice?.lineItems ?? [];
     final totalAmount = invoice?.totalAmount ?? 0.0;
 
@@ -665,14 +672,18 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              patientName,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textPrimary,
+                            Expanded(
+                              child: Text(
+                                patientName,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
@@ -813,31 +824,37 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  invoice?.hasSeniorOrPwdDiscount == true
-                                      ? Icons.verified
-                                      : Icons.discount_outlined,
-                                  color: invoice?.hasSeniorOrPwdDiscount == true
-                                      ? AppColors.success
-                                      : AppColors.primary,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  invoice?.hasSeniorOrPwdDiscount == true
-                                      ? 'PH Statutory 20% Discount (${invoice!.discountType.toUpperCase()})'
-                                      : 'Senior Citizen / PWD Exemption',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.textPrimary,
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    invoice?.hasSeniorOrPwdDiscount == true
+                                        ? Icons.verified
+                                        : Icons.discount_outlined,
+                                    color: invoice?.hasSeniorOrPwdDiscount == true
+                                        ? AppColors.success
+                                        : AppColors.primary,
+                                    size: 18,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      invoice?.hasSeniorOrPwdDiscount == true
+                                          ? 'PH Statutory 20% Discount (${invoice!.discountType.toUpperCase()})'
+                                          : 'Senior Citizen / PWD Exemption',
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            if (!isPaid)
+                            if (!isPaid && userRole.canCollectPayment) ...[
+                              const SizedBox(width: 8),
                               TextButton(
                                 onPressed: () => _showDiscountDialog(invoice),
                                 style: TextButton.styleFrom(
@@ -856,6 +873,7 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                                   ),
                                 ),
                               ),
+                            ],
                           ],
                         ),
                         if (invoice?.hasSeniorOrPwdDiscount == true) ...[
@@ -884,48 +902,53 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                   if (!isPaid) ...[
                     Row(
                       children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _showAddServiceDialog,
-                            icon: const Icon(Icons.medical_services_outlined, size: 16, color: AppColors.primary),
-                            label: const Text('Add Service Fee', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary)),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              side: const BorderSide(color: AppColors.primary),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        if (userRole.canAddClinicalService)
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _showAddServiceDialog,
+                              icon: const Icon(Icons.medical_services_outlined, size: 16, color: AppColors.primary),
+                              label: const Text('Add Service Fee', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary)),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                side: const BorderSide(color: AppColors.primary),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _showAddCatalogItemDialog,
-                            icon: const Icon(Icons.add_shopping_cart, size: 16, color: AppColors.accent),
-                            label: const Text('Dispense Med/Item', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.accent)),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              side: const BorderSide(color: AppColors.accent),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        if (userRole.canDispense) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _showAddCatalogItemDialog,
+                              icon: const Icon(Icons.add_shopping_cart, size: 16, color: AppColors.accent),
+                              label: const Text('Dispense Med/Item', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.accent)),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                side: const BorderSide(color: AppColors.accent),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      onPressed: widget.onScanMore,
-                      icon: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 18),
-                      label: const Text(
-                        'Scan Barcode (Point of Care)',
-                        style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 13),
+                    if (userRole.canDispense) ...[
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        onPressed: widget.onScanMore,
+                        icon: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 18),
+                        label: const Text(
+                          'Scan Barcode (Point of Care)',
+                          style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 13),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          minimumSize: const Size.fromHeight(46),
+                        ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        minimumSize: const Size.fromHeight(46),
-                      ),
-                    ),
+                    ],
                   ],
                 ],
               ),
@@ -986,25 +1009,27 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: isPaid || _isProcessing ? null : () => _showPaymentCollectionDialog(invoice),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isPaid ? AppColors.textMuted : AppColors.success,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      minimumSize: const Size.fromHeight(48),
+                  if (userRole.canCollectPayment) ...[
+                    const SizedBox(height: 12),
+                    ElevatedButton(
+                      onPressed: isPaid || _isProcessing ? null : () => _showPaymentCollectionDialog(invoice),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isPaid ? AppColors.textMuted : AppColors.success,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                      child: _isProcessing
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(
+                              isPaid ? 'Settled in Full' : 'Collect Payment / Settle Invoice',
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                            ),
                     ),
-                    child: _isProcessing
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : Text(
-                            isPaid ? 'Settled in Full' : 'Collect Payment / Settle Invoice',
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                          ),
-                  ),
+                  ],
                 ],
               ),
             ),

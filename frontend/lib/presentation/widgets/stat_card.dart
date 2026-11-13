@@ -6,6 +6,7 @@ class StatCard extends StatelessWidget {
   final String value;
   final String label;
   final Color valueColor;
+  final VoidCallback? onTap;
 
   const StatCard({
     super.key,
@@ -13,14 +14,14 @@ class StatCard extends StatelessWidget {
     required this.value,
     required this.label,
     required this.valueColor,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final cardContent = Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
@@ -28,13 +29,20 @@ class StatCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              color: valueColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 18, color: valueColor),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: valueColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 18, color: valueColor),
+              ),
+              if (onTap != null)
+                const Icon(Icons.open_in_new, size: 14, color: AppColors.textMuted),
+            ],
           ),
           const SizedBox(height: 6),
           FittedBox(
@@ -62,6 +70,18 @@ class StatCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: onTap != null
+          ? InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: cardContent,
+            )
+          : cardContent,
     );
   }
 }

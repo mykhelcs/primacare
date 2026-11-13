@@ -1,11 +1,88 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/models/inventory_item.dart';
 import '../providers/inventory_provider.dart';
 import '../widgets/status_badge.dart';
 
 class ExpiryAlertsScreen extends ConsumerWidget {
   const ExpiryAlertsScreen({super.key});
+
+  void _showBatchDetailModal(
+    BuildContext context, {
+    required String itemName,
+    required InventoryBatch batch,
+    required bool isCritical,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              isCritical ? Icons.warning_amber_rounded : Icons.timer_outlined,
+              color: isCritical ? AppColors.danger : AppColors.warning,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'Batch Expiry Details',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(itemName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+            const SizedBox(height: 10),
+            _detailRow('Batch Number', batch.batchNumber),
+            _detailRow('Units Remaining', '${batch.quantityRemaining} units'),
+            _detailRow('Expiry Date', batch.expiryDate.toString().substring(0, 10)),
+            _detailRow('Received Date', batch.receivedDate.toString().substring(0, 10)),
+            _detailRow('Time Remaining', '${batch.daysUntilExpiry} days'),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isCritical ? AppColors.dangerLight : AppColors.warningLight,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                isCritical
+                    ? 'FEFO Priority: Dispense this batch first or quarantine if expired.'
+                    : 'Watchlist: Schedule stock rotation within 60 days.',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: isCritical ? AppColors.danger : AppColors.warning,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -69,7 +146,8 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                   else
                     ...criticalBatches.map(
                       (b) {
-                        final name = itemNameMap[b.itemId] ??
+                        final name = b.itemName ??
+                            itemNameMap[b.itemId] ??
                             'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})';
                         return _buildAlertCard(
                           itemName: name,
@@ -77,6 +155,12 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                           qty: '${b.quantityRemaining} units remaining',
                           expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
                           isCritical: true,
+                          onTap: () => _showBatchDetailModal(
+                            context,
+                            itemName: name,
+                            batch: b,
+                            isCritical: true,
+                          ),
                         );
                       },
                     ),
@@ -106,7 +190,8 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                   else
                     ...upcomingBatches.map(
                       (b) {
-                        final name = itemNameMap[b.itemId] ??
+                        final name = b.itemName ??
+                            itemNameMap[b.itemId] ??
                             'Medication Batch (Item ${b.itemId.length >= 4 ? b.itemId.substring(0, 4) : b.itemId})';
                         return _buildAlertCard(
                           itemName: name,
@@ -114,6 +199,12 @@ class ExpiryAlertsScreen extends ConsumerWidget {
                           qty: '${b.quantityRemaining} units remaining',
                           expiry: 'Expires in ${b.daysUntilExpiry} days (${b.expiryDate.toString().substring(0, 10)})',
                           isCritical: false,
+                          onTap: () => _showBatchDetailModal(
+                            context,
+                            itemName: name,
+                            batch: b,
+                            isCritical: false,
+                          ),
                         );
                       },
                     ),
@@ -129,63 +220,73 @@ class ExpiryAlertsScreen extends ConsumerWidget {
     required String qty,
     required String expiry,
     required bool isCritical,
+    required VoidCallback onTap,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isCritical ? AppColors.danger.withValues(alpha: 0.3) : AppColors.border,
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isCritical ? AppColors.dangerLight : AppColors.warningLight,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              isCritical ? Icons.warning_amber_rounded : Icons.timer_outlined,
-              size: 22,
-              color: isCritical ? AppColors.danger : AppColors.warning,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(
-                  itemName,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isCritical ? AppColors.dangerLight : AppColors.warningLight,
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$batch · $qty',
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  expiry,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                  child: Icon(
+                    isCritical ? Icons.warning_amber_rounded : Icons.timer_outlined,
+                    size: 22,
                     color: isCritical ? AppColors.danger : AppColors.warning,
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        itemName,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$batch · $qty',
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        expiry,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: isCritical ? AppColors.danger : AppColors.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                StatusBadge.critical(text: isCritical ? 'Urgent' : 'Watch'),
               ],
             ),
           ),
-          StatusBadge.critical(text: isCritical ? 'Urgent' : 'Watch'),
-        ],
+        ),
       ),
     );
   }

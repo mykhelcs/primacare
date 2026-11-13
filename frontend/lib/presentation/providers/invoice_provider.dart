@@ -91,9 +91,15 @@ class OpenInvoicesNotifier extends AsyncNotifier<List<Invoice>> {
     return updated;
   }
 
-  Future<bool> markInvoicePaid(String invoiceId) async {
+  Future<bool> markInvoicePaid(
+    String invoiceId, {
+    String paymentMethod = 'Cash',
+  }) async {
     final repo = ref.read(invoiceRepositoryProvider);
-    final success = await repo.markAsPaid(invoiceId);
+    final success = await repo.markAsPaid(
+      invoiceId,
+      paymentMethod: paymentMethod,
+    );
     if (success) {
       await refresh();
       ref.invalidate(invoiceDetailProvider(invoiceId));

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/models/inventory_item.dart';
+import '../providers/auth_provider.dart';
 import '../providers/inventory_provider.dart';
 import '../widgets/status_badge.dart';
 import 'barcode_catalog_screen.dart';
@@ -137,8 +138,7 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
                         itemCount: batches.length,
                         itemBuilder: (context, bIdx) {
                           final batch = batches[bIdx];
-                          final now = DateTime.now();
-                          final daysLeft = batch.expiryDate.difference(now).inDays;
+                          final daysLeft = batch.daysUntilExpiry;
 
                           return Container(
                             margin: const EdgeInsets.only(bottom: 8),
@@ -318,6 +318,7 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final userRole = ref.watch(currentUserRoleProvider);
     final inventoryAsync = ref.watch(inventoryListProvider);
     final allItems = inventoryAsync.value ?? [];
 
@@ -345,11 +346,12 @@ class _InventoryListScreenState extends ConsumerState<InventoryListScreen> {
               );
             },
           ),
-          IconButton(
-            tooltip: 'Add Catalog Item',
-            icon: const Icon(Icons.add_box, color: AppColors.primary),
-            onPressed: _showAddItemDialog,
-          ),
+          if (userRole.canManageInventory)
+            IconButton(
+              tooltip: 'Add Catalog Item',
+              icon: const Icon(Icons.add_box, color: AppColors.primary),
+              onPressed: _showAddItemDialog,
+            ),
           const SizedBox(width: 8),
         ],
       ),

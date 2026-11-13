@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/models/patient.dart';
 import '../../domain/models/invoice.dart';
+import '../providers/auth_provider.dart';
 import '../providers/patient_provider.dart';
 import '../providers/invoice_provider.dart';
 import '../providers/inventory_provider.dart';
@@ -89,24 +90,57 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
             TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
                 Navigator.pop(dialogCtx);
-                // 1. Deduct stock via FEFO
-                await ref.read(inventoryRepositoryProvider).dispenseItemFEFO(
-                      itemId: selectedItemId,
-                      quantity: 1,
-                    );
-                // 2. Add line item to or create an invoice for this patient
+
+                final selectedItem = inventory.where((i) => i.id == selectedItemId).firstOrNull;
+                if (selectedItem == null ||
+                    selectedItem.barcode == null ||
+                    selectedItem.barcode!.trim().isEmpty) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('Selected vaccine has no barcode configured for dispensation.'),
+                      backgroundColor: AppColors.danger,
+                    ),
+                  );
+                  return;
+                }
+
+                if (selectedItem.totalStock < 1) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Insufficient stock for ${selectedItem.name} (${selectedItem.totalStock} available).'),
+                      backgroundColor: AppColors.danger,
+                    ),
+                  );
+                  return;
+                }
+
+                // 1. Find or open an invoice for this patient
                 final invoices = ref.read(openInvoicesProvider).value ?? [];
                 var inv = invoices.where((i) => i.patientId == patient.id && i.isOpen).firstOrNull;
                 inv ??= await ref.read(openInvoicesProvider.notifier).createInvoiceForPatient(
                       patientId: patient.id,
                       patientName: patient.fullName,
                     );
-                await ref.read(openInvoicesProvider.notifier).addServiceItem(
+
+                // 2. Atomically dispense via FEFO RPC / repository (validates stock & links batch)
+                final result = await ref.read(openInvoicesProvider.notifier).dispenseBarcode(
+                      barcode: selectedItem.barcode!,
                       invoiceId: inv.id,
-                      serviceName: selectedItemName,
-                      fee: inventory.where((i) => i.id == selectedItemId).firstOrNull?.unitCost ?? 450.0,
+                      quantity: 1,
                     );
+
+                if (!result.success) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(result.message ?? 'Unable to record dose: insufficient stock.'),
+                      backgroundColor: AppColors.danger,
+                    ),
+                  );
+                  return;
+                }
 
                 // 3. Queue an automatic booster notification for 30 days ahead
                 await ref.read(notificationListProvider.notifier).scheduleVaccineReminder(
@@ -117,9 +151,10 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
                     );
 
                 await ref.read(inventoryListProvider.notifier).refresh();
+                ref.invalidate(expiringBatchesProvider);
 
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   SnackBar(
                     content: Text('Successfully recorded dose of $selectedItemName for ${patient.fullName}!'),
                     backgroundColor: AppColors.success,
@@ -136,7 +171,9 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final userRole = ref.watch(currentUserRoleProvider);
     final patientsAsync = ref.watch(patientListProvider);
+    ref.watch(inventoryListProvider);
     final patients = patientsAsync.value ?? [];
 
     Patient? selectedPatient;
@@ -210,11 +247,12 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
                       'Immunization Timeline (DOH / CDC)',
                       style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                     ),
-                    TextButton.icon(
-                      onPressed: selectedPatient != null ? () => _showRecordDoseDialog(selectedPatient!) : null,
-                      icon: const Icon(Icons.add, size: 16),
-                      label: const Text('Record Dose', style: TextStyle(fontSize: 12)),
-                    ),
+                    if (userRole.canDispense)
+                      TextButton.icon(
+                        onPressed: selectedPatient != null ? () => _showRecordDoseDialog(selectedPatient!) : null,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Record Dose', style: TextStyle(fontSize: 12)),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -229,6 +267,13 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
                     date: isDone ? 'Administered & Recorded' : timing,
                     batch: isDone ? 'Dispensed on Patient Encounter' : 'Awaiting Clinic Point-of-Care Allocation',
                     isDone: isDone,
+                    onTap: () => _showDoseDetailModal(
+                      vaccine: name,
+                      statusText: isDone ? 'Administered & Recorded' : timing,
+                      isDone: isDone,
+                      patient: selectedPatient,
+                      canDispense: userRole.canDispense,
+                    ),
                   );
                 }),
               ],
@@ -341,6 +386,8 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
                     child: Text(
                       'Known Allergies: ${patient.allergies}',
                       style: const TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
                     ),
                   ),
                 ],
@@ -352,41 +399,90 @@ class _VaccineScheduleScreenState extends ConsumerState<VaccineScheduleScreen> {
     );
   }
 
+  void _showDoseDetailModal({
+    required String vaccine,
+    required String statusText,
+    required bool isDone,
+    required Patient? patient,
+    required bool canDispense,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Immunization Dose Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(vaccine, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(statusText, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            if (patient != null) ...[
+              const SizedBox(height: 6),
+              Text('Patient: ${patient.fullName}', style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          if (!isDone && patient != null && canDispense)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showRecordDoseDialog(patient);
+              },
+              child: const Text('Record Dose'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDoseCard({
     required String vaccine,
     required String date,
     required String batch,
     required bool isDone,
+    required VoidCallback onTap,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        children: [
-          Icon(
-            isDone ? Icons.verified : Icons.schedule,
-            color: isDone ? AppColors.success : AppColors.primary,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(vaccine, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                const SizedBox(height: 2),
-                Text(date, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                const SizedBox(height: 2),
-                Text(batch, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Icon(
+                  isDone ? Icons.verified : Icons.schedule,
+                  color: isDone ? AppColors.success : AppColors.primary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(vaccine, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      const SizedBox(height: 2),
+                      Text(date, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      const SizedBox(height: 2),
+                      Text(batch, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                    ],
+                  ),
+                ),
+                isDone ? StatusBadge.paid() : StatusBadge.open(),
               ],
             ),
           ),
-          isDone ? StatusBadge.paid() : StatusBadge.open(),
-        ],
+        ),
       ),
     );
   }

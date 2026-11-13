@@ -7,6 +7,11 @@ enum BiometricType {
   none,
 }
 
+/// Hardware adapter contract for native biometric authentication (e.g., local_auth).
+abstract class BiometricAuthAdapter {
+  Future<bool> authenticate({required String reason});
+}
+
 class BiometricService extends ChangeNotifier {
   static final BiometricService _instance = BiometricService._internal();
   factory BiometricService() => _instance;
@@ -15,10 +20,17 @@ class BiometricService extends ChangeNotifier {
   bool _isBiometricSupported = true;
   bool _isEnrolled = true;
   BiometricType _availableType = BiometricType.fingerprint;
+  BiometricAuthAdapter? _adapter;
 
   bool get isBiometricSupported => _isBiometricSupported;
   bool get isEnrolled => _isEnrolled;
   BiometricType get availableType => _availableType;
+  bool get hasHardwareAdapter => _adapter != null;
+
+  void setAdapter(BiometricAuthAdapter? adapter) {
+    _adapter = adapter;
+    notifyListeners();
+  }
 
   String get biometricName {
     switch (_availableType) {
@@ -51,8 +63,16 @@ class BiometricService extends ChangeNotifier {
       return false;
     }
 
-    // Simulate fast native biometric sensor scan
-    await Future.delayed(const Duration(milliseconds: 600));
+    if (_adapter != null) {
+      return _adapter!.authenticate(reason: reason);
+    }
+
+    // Fail closed in release builds when no native biometric adapter is registered
+    if (kReleaseMode) {
+      return false;
+    }
+
+    await Future.delayed(const Duration(milliseconds: 200));
     return true;
   }
 }

@@ -45,7 +45,7 @@ class InventoryItem {
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
     return InventoryItem(
-      id: json['id'] as String,
+      id: (json['id'] ?? json['item_id'] ?? '') as String,
       name: json['name'] as String? ?? '',
       barcode: json['barcode'] as String?,
       unit: json['unit'] as String? ?? 'piece',
@@ -73,6 +73,7 @@ class InventoryItem {
 class InventoryBatch {
   final String id;
   final String itemId;
+  final String? itemName;
   final String batchNumber;
   final int quantityRemaining;
   final DateTime expiryDate;
@@ -81,6 +82,7 @@ class InventoryBatch {
   const InventoryBatch({
     required this.id,
     required this.itemId,
+    this.itemName,
     required this.batchNumber,
     required this.quantityRemaining,
     required this.expiryDate,
@@ -105,6 +107,7 @@ class InventoryBatch {
   InventoryBatch copyWith({
     String? id,
     String? itemId,
+    String? itemName,
     String? batchNumber,
     int? quantityRemaining,
     DateTime? expiryDate,
@@ -113,6 +116,7 @@ class InventoryBatch {
     return InventoryBatch(
       id: id ?? this.id,
       itemId: itemId ?? this.itemId,
+      itemName: itemName ?? this.itemName,
       batchNumber: batchNumber ?? this.batchNumber,
       quantityRemaining: quantityRemaining ?? this.quantityRemaining,
       expiryDate: expiryDate ?? this.expiryDate,
@@ -122,8 +126,9 @@ class InventoryBatch {
 
   factory InventoryBatch.fromJson(Map<String, dynamic> json) {
     return InventoryBatch(
-      id: json['id'] as String,
-      itemId: json['item_id'] as String,
+      id: (json['id'] ?? json['batch_id'] ?? '') as String,
+      itemId: (json['item_id'] ?? '') as String,
+      itemName: json['item_name'] as String?,
       batchNumber: json['batch_number'] as String? ?? '',
       quantityRemaining: (json['quantity_remaining'] as num?)?.toInt() ?? 0,
       expiryDate: DateTime.tryParse(json['expiry_date'] as String? ?? '') ?? DateTime.now(),

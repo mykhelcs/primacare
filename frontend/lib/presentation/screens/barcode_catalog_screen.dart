@@ -32,6 +32,95 @@ class _BarcodeCatalogScreenState extends ConsumerState<BarcodeCatalogScreen> {
     super.dispose();
   }
 
+  void _showItemQrModal(InventoryItem item) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.qr_code_2, color: AppColors.primary),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Barcode & QR Label Preview',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 280,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: SizedBox(
+                    width: 160,
+                    height: 160,
+                    child: QrImageView(
+                      data: item.barcode ?? '',
+                      version: QrVersions.auto,
+                      size: 160,
+                      gapless: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  item.name,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${item.category} · ₱${item.unitCost.toStringAsFixed(2)} / ${item.unit} · Stock: ${item.totalStock}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  item.barcode ?? 'N/A',
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: item.barcode ?? ''));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Copied ${item.barcode ?? ''} to clipboard!'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            },
+            child: const Text('Copy Barcode'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showPrintSheetDialog(List<InventoryItem> items) {
     showDialog(
       context: context,
@@ -262,8 +351,11 @@ class _BarcodeCatalogScreenState extends ConsumerState<BarcodeCatalogScreen> {
                           side: const BorderSide(color: AppColors.border),
                         ),
                         elevation: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => _showItemQrModal(item),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -345,16 +437,18 @@ class _BarcodeCatalogScreenState extends ConsumerState<BarcodeCatalogScreen> {
                                       children: [
                                         const Icon(Icons.qr_code, size: 16, color: AppColors.primary),
                                         const SizedBox(width: 4),
-                                        SelectableText(
-                                          item.barcode ?? 'N/A',
-                                          style: const TextStyle(
-                                            fontFamily: 'monospace',
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 12,
-                                            color: AppColors.textPrimary,
+                                        Expanded(
+                                          child: SelectableText(
+                                            item.barcode ?? 'N/A',
+                                            style: const TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 12,
+                                              color: AppColors.textPrimary,
+                                            ),
                                           ),
                                         ),
-                                        const Spacer(),
+                                        const SizedBox(width: 8),
                                         OutlinedButton.icon(
                                           style: OutlinedButton.styleFrom(
                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -396,6 +490,7 @@ class _BarcodeCatalogScreenState extends ConsumerState<BarcodeCatalogScreen> {
                               ),
                             ],
                           ),
+                        ),
                         ),
                       );
                     },
